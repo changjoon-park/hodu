@@ -6,6 +6,7 @@ include!(concat!(env!("OUT_DIR"), "/generated_source.rs"));
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Source {
     OpsBinary,
+    OpsBitwise,
     OpsCast,
     OpsConcatSplit,
     OpsConv,

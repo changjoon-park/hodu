@@ -14,6 +14,7 @@ fn main() {
     // List of kernel files to compile
     let kernel_files = vec![
         "ops_binary.cu",
+        "ops_bitwise.cu",
         "ops_cast.cu",
         "ops_concat_split.cu",
         "ops_conv.cu",

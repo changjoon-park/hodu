@@ -28,6 +28,12 @@ pub trait BackendStorageT: Sized {
 
     fn call_ops_binary_logical(&self, _: &Self, _: &Layout, _: &Layout, _: Op) -> HoduResult<Self>;
 
+    fn call_ops_bitwise_binary(&self, _: &Self, _: &Layout, _: &Layout, _: Op) -> HoduResult<Self>;
+
+    fn call_ops_bitwise_unary(&self, _: &Layout, _: Op) -> HoduResult<Self>;
+
+    fn call_ops_bitwise_unary_scalar(&self, _: &Layout, _: u32, _: Op) -> HoduResult<Self>;
+
     fn call_ops_cmp(&self, _: &Self, _: &Layout, _: &Layout, _: Op) -> HoduResult<Self>;
 
     fn call_ops_cmp_scalar(&self, _: &Layout, _: Scalar, _: Op) -> HoduResult<Self>;
@@ -303,6 +309,68 @@ impl BackendStorage {
                 expected: lhs_device,
                 got: rhs_device,
             }),
+        }
+    }
+
+    pub(crate) fn call_ops_bitwise_binary(
+        &self,
+        rhs_storage: &Self,
+        lhs_layout: &Layout,
+        rhs_layout: &Layout,
+        op: Op,
+    ) -> HoduResult<Self> {
+        let lhs_device = self.device();
+        let rhs_device = rhs_storage.device();
+        if lhs_device != rhs_device {
+            return Err(HoduError::DeviceMismatch {
+                expected: lhs_device,
+                got: rhs_device,
+            });
+        }
+
+        match (self, rhs_storage) {
+            (Self::CPU(lhs_storage), Self::CPU(rhs_storage)) => Ok(Self::CPU(lhs_storage.call_ops_bitwise_binary(
+                rhs_storage,
+                lhs_layout,
+                rhs_layout,
+                op,
+            )?)),
+            #[cfg(feature = "cuda")]
+            (Self::CUDA(lhs_storage), Self::CUDA(rhs_storage)) => Ok(Self::CUDA(lhs_storage.call_ops_bitwise_binary(
+                rhs_storage,
+                lhs_layout,
+                rhs_layout,
+                op,
+            )?)),
+            #[cfg(feature = "metal")]
+            (Self::Metal(lhs_storage), Self::Metal(rhs_storage)) => Ok(Self::Metal(
+                lhs_storage.call_ops_bitwise_binary(rhs_storage, lhs_layout, rhs_layout, op)?,
+            )),
+            #[cfg(any(feature = "cuda", feature = "metal"))]
+            _ => Err(HoduError::DeviceMismatch {
+                expected: lhs_device,
+                got: rhs_device,
+            }),
+        }
+    }
+
+    pub(crate) fn call_ops_bitwise_unary(&self, layout: &Layout, op: Op) -> HoduResult<Self> {
+        match self {
+            Self::CPU(storage) => Ok(Self::CPU(storage.call_ops_bitwise_unary(layout, op)?)),
+            #[cfg(feature = "cuda")]
+            Self::CUDA(storage) => Ok(Self::CUDA(storage.call_ops_bitwise_unary(layout, op)?)),
+            #[cfg(feature = "metal")]
+            Self::Metal(storage) => Ok(Self::Metal(storage.call_ops_bitwise_unary(layout, op)?)),
+        }
+    }
+
+    pub(crate) fn call_ops_bitwise_unary_scalar(&self, layout: &Layout, shift: u32, op: Op) -> HoduResult<Self> {
+        match self {
+            Self::CPU(storage) => Ok(Self::CPU(storage.call_ops_bitwise_unary_scalar(layout, shift, op)?)),
+            #[cfg(feature = "cuda")]
+            Self::CUDA(storage) => Ok(Self::CUDA(storage.call_ops_bitwise_unary_scalar(layout, shift, op)?)),
+            #[cfg(feature = "metal")]
+            Self::Metal(storage) => Ok(Self::Metal(storage.call_ops_bitwise_unary_scalar(layout, shift, op)?)),
         }
     }
 

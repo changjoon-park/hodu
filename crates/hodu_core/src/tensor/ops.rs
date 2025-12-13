@@ -1,4 +1,5 @@
 mod binary;
+mod bitwise;
 mod cast_memory;
 mod cmp;
 mod concat_split;

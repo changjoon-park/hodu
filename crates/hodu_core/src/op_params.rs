@@ -16,6 +16,12 @@ pub struct BinaryParams;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BinaryLogicalParams;
 
+// BitwiseBinary Operations
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BitwiseBinaryParams;
+
 // Cmp Operations
 
 #[derive(Debug, Clone)]
@@ -41,6 +47,20 @@ pub struct UnaryParams;
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UnaryLogicalParams;
+
+// BitwiseUnary Operations
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BitwiseUnaryParams;
+
+// BitwiseUnaryScalar Operations
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BitwiseUnaryScalarParams {
+    pub shift: u32,
+}
 
 // UnaryScalar Operations
 
@@ -507,6 +527,11 @@ pub enum OpParams {
     // Binary
     Binary(BinaryParams),
     BinaryLogical(BinaryLogicalParams),
+
+    // Bitwise
+    BitwiseBinary(BitwiseBinaryParams),
+    BitwiseUnary(BitwiseUnaryParams),
+    BitwiseUnaryScalar(BitwiseUnaryScalarParams),
 
     // Cmp
     Cmp(CmpParams),

@@ -442,6 +442,9 @@ fn get_op_category(op: &Op) -> &'static str {
     match op {
         Op::Binary(_) => "Binary",
         Op::BinaryLogical(_) => "BinaryLogical",
+        Op::BitwiseBinary(_) => "BitwiseBinary",
+        Op::BitwiseUnary(_) => "BitwiseUnary",
+        Op::BitwiseUnaryScalar(_) => "BitwiseUnaryScalar",
         Op::Cmp(_) => "Compare",
         Op::CmpScalar(_) => "CmpScalar",
         Op::Unary(_) => "Unary",

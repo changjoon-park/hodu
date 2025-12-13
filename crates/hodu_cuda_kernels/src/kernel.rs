@@ -131,6 +131,7 @@ impl Kernels {
     fn get_source_code(&self, source: Source) -> &'static str {
         match source {
             Source::OpsBinary => crate::source::get_ops_binary(),
+            Source::OpsBitwise => crate::source::get_ops_bitwise(),
             Source::OpsCast => crate::source::get_ops_cast(),
             Source::OpsConcatSplit => crate::source::get_ops_concat_split(),
             Source::OpsConv => crate::source::get_ops_conv(),

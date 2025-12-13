@@ -7,6 +7,7 @@ const UTILS: &str = include_str!("../kernels/headers/utils.metal");
 const STORAGE_SRC: &str = include_str!("../kernels/storage.metal");
 
 const BINARY_SRC: &str = include_str!("../kernels/ops_binary.metal");
+const BITWISE_SRC: &str = include_str!("../kernels/ops_bitwise.metal");
 const CAST_SRC: &str = include_str!("../kernels/ops_cast.metal");
 const CONCAT_SPLIT_SRC: &str = include_str!("../kernels/ops_concat_split.metal");
 const CONV_SRC: &str = include_str!("../kernels/ops_conv.metal");
@@ -38,6 +39,7 @@ pub fn get_storage() -> &'static str {
 }
 
 static BINARY: OnceLock<String> = OnceLock::new();
+static BITWISE: OnceLock<String> = OnceLock::new();
 static CAST: OnceLock<String> = OnceLock::new();
 static CONCAT_SPLIT: OnceLock<String> = OnceLock::new();
 static CONV: OnceLock<String> = OnceLock::new();
@@ -57,6 +59,10 @@ static WINDOWING: OnceLock<String> = OnceLock::new();
 
 pub fn get_binary() -> &'static str {
     BINARY.get_or_init(|| combine_source(BINARY_SRC))
+}
+
+pub fn get_bitwise() -> &'static str {
+    BITWISE.get_or_init(|| combine_source(BITWISE_SRC))
 }
 
 pub fn get_cast() -> &'static str {
@@ -126,6 +132,7 @@ pub fn get_windowing() -> &'static str {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Source {
     Binary,
+    Bitwise,
     Cast,
     ConcatSplit,
     Conv,

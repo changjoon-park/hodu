@@ -3,6 +3,7 @@
 
 pub mod macros;
 pub mod ops_binary;
+pub mod ops_bitwise;
 pub mod ops_cast;
 pub mod ops_concat_split;
 pub mod ops_conv;
@@ -26,6 +27,7 @@ pub use macros::Kernel;
 
 // Re-export all operations
 pub use ops_binary::*;
+pub use ops_bitwise::*;
 pub use ops_cast::*;
 pub use ops_concat_split::*;
 pub use ops_conv::*;

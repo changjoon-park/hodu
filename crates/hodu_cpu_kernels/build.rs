@@ -7,6 +7,7 @@ fn main() {
     // Source files
     build
         .file("kernels/ops_binary.c")
+        .file("kernels/ops_bitwise.c")
         .file("kernels/ops_cast.c")
         .file("kernels/ops_concat_split.c")
         .file("kernels/ops_conv.c")

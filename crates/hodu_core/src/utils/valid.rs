@@ -114,6 +114,13 @@ pub fn validate_dtype_for_op(dtype: DType, op: Op) -> HoduResult<()> {
             // All types supported
         },
 
+        // Bitwise binary operations - integer only
+        Op::BitwiseBinary(_) => {
+            if dtype == DType::BOOL || dtype.is_float() {
+                return Err(HoduError::UnsupportedDTypeForOp { dtype, op });
+            }
+        },
+
         // Comparison operations
         Op::Cmp(inner_op) => match inner_op {
             CmpOp::Eq | CmpOp::Ne => {
@@ -213,6 +220,13 @@ pub fn validate_dtype_for_op(dtype: DType, op: Op) -> HoduResult<()> {
                     return Err(HoduError::UnsupportedDTypeForOp { dtype, op });
                 }
             },
+        },
+
+        // Bitwise unary operations - integer only
+        Op::BitwiseUnary(_) | Op::BitwiseUnaryScalar(_) => {
+            if dtype == DType::BOOL || dtype.is_float() {
+                return Err(HoduError::UnsupportedDTypeForOp { dtype, op });
+            }
         },
 
         // Unary with scalar
@@ -383,6 +397,9 @@ pub fn validate_requires_grad_for_op(op: Op) -> bool {
         // Binary logical operations - no backprop
         Op::BinaryLogical(_) => false, // !
 
+        // Bitwise binary operations - no backprop
+        Op::BitwiseBinary(_) => false, // !
+
         // Comparison operations - no backprop
         Op::Cmp(_) => false, // !
 
@@ -413,6 +430,9 @@ pub fn validate_requires_grad_for_op(op: Op) -> bool {
 
         // Unary logical operations - no backprop
         Op::UnaryLogical(_) => false, // !
+
+        // Bitwise unary operations - no backprop
+        Op::BitwiseUnary(_) | Op::BitwiseUnaryScalar(_) => false, // !
 
         // Unary with scalar
         Op::UnaryScalar(_) => true,

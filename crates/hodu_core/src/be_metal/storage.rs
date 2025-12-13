@@ -1,4 +1,5 @@
 mod ops_binary;
+mod ops_bitwise;
 mod ops_concat_split;
 mod ops_conv;
 mod ops_einsum;
@@ -243,6 +244,24 @@ impl BackendStorageT for MetalStorage {
         op: Op,
     ) -> HoduResult<Self> {
         ops_binary::call_ops_binary_logical(self, rhs_storage, lhs_layout, rhs_layout, op)
+    }
+
+    fn call_ops_bitwise_binary(
+        &self,
+        rhs_storage: &Self,
+        lhs_layout: &Layout,
+        rhs_layout: &Layout,
+        op: Op,
+    ) -> HoduResult<Self> {
+        ops_bitwise::call_ops_bitwise_binary(self, rhs_storage, lhs_layout, rhs_layout, op)
+    }
+
+    fn call_ops_bitwise_unary(&self, layout: &Layout, op: Op) -> HoduResult<Self> {
+        ops_bitwise::call_ops_bitwise_unary(self, layout, op)
+    }
+
+    fn call_ops_bitwise_unary_scalar(&self, layout: &Layout, shift: u32, op: Op) -> HoduResult<Self> {
+        ops_bitwise::call_ops_bitwise_unary_scalar(self, layout, shift, op)
     }
 
     fn call_ops_cmp(&self, rhs_storage: &Self, lhs_layout: &Layout, rhs_layout: &Layout, op: Op) -> HoduResult<Self> {

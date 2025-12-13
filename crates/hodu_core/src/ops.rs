@@ -65,6 +65,34 @@ impl fmt::Debug for BinaryLogicalOp {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BitwiseBinaryOp {
+    Shl, // no-backprop, integer only
+    Shr, // no-backprop, integer only
+    And, // no-backprop, integer only
+    Or,  // no-backprop, integer only
+    Xor, // no-backprop, integer only
+}
+
+impl fmt::Display for BitwiseBinaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Shl => write!(f, "shl"),
+            Self::Shr => write!(f, "shr"),
+            Self::And => write!(f, "bitwise_and"),
+            Self::Or => write!(f, "bitwise_or"),
+            Self::Xor => write!(f, "bitwise_xor"),
+        }
+    }
+}
+
+impl fmt::Debug for BitwiseBinaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CmpOp {
     Eq, // no-backprop
     Ne, // no-backprop
@@ -252,6 +280,48 @@ impl fmt::Display for UnaryLogicalOp {
 }
 
 impl fmt::Debug for UnaryLogicalOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BitwiseUnaryOp {
+    Not, // no-backprop, integer only
+}
+
+impl fmt::Display for BitwiseUnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Not => write!(f, "bitwise_not"),
+        }
+    }
+}
+
+impl fmt::Debug for BitwiseUnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BitwiseUnaryScalarOp {
+    ShlScalar, // no-backprop, integer only
+    ShrScalar, // no-backprop, integer only
+}
+
+impl fmt::Display for BitwiseUnaryScalarOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ShlScalar => write!(f, "shl_scalar"),
+            Self::ShrScalar => write!(f, "shr_scalar"),
+        }
+    }
+}
+
+impl fmt::Debug for BitwiseUnaryScalarOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
@@ -760,6 +830,9 @@ impl fmt::Debug for MemoryOp {
 pub enum Op {
     Binary(BinaryOp),
     BinaryLogical(BinaryLogicalOp),
+    BitwiseBinary(BitwiseBinaryOp),
+    BitwiseUnary(BitwiseUnaryOp),
+    BitwiseUnaryScalar(BitwiseUnaryScalarOp),
     Cmp(CmpOp),
     CmpScalar(CmpScalarOp),
     Unary(UnaryOp),
@@ -791,6 +864,9 @@ impl fmt::Display for Op {
         match self {
             Self::Binary(op) => write!(f, "{}", op),
             Self::BinaryLogical(op) => write!(f, "{}", op),
+            Self::BitwiseBinary(op) => write!(f, "{}", op),
+            Self::BitwiseUnary(op) => write!(f, "{}", op),
+            Self::BitwiseUnaryScalar(op) => write!(f, "{}", op),
             Self::Cmp(op) => write!(f, "{}", op),
             Self::CmpScalar(op) => write!(f, "{}", op),
             Self::Unary(op) => write!(f, "{}", op),
@@ -824,6 +900,9 @@ impl fmt::Debug for Op {
         match self {
             Self::Binary(op) => write!(f, "Binary[{}]", op),
             Self::BinaryLogical(op) => write!(f, "BinaryLogical[{}]", op),
+            Self::BitwiseBinary(op) => write!(f, "BitwiseBinary[{}]", op),
+            Self::BitwiseUnary(op) => write!(f, "BitwiseUnary[{}]", op),
+            Self::BitwiseUnaryScalar(op) => write!(f, "BitwiseUnaryScalar[{}]", op),
             Self::Cmp(op) => write!(f, "Cmp[{}]", op),
             Self::CmpScalar(op) => write!(f, "CmpScalar[{}]", op),
             Self::Unary(op) => write!(f, "Unary[{}]", op),
