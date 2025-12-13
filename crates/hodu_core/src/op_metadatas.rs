@@ -991,6 +991,44 @@ pub fn unique_bitonic_step_metadata(layout: &Layout, k: usize, j: usize) -> Vec<
     vec![num_els, layout.offset(), padded_size, k, j]
 }
 
+/// Generate metadata for compress operations
+///
+/// Format:
+/// - metadata[0]: num_input_els (total number of input elements)
+/// - metadata[1]: num_dims (number of dimensions)
+/// - metadata[2..2+num_dims]: input_shape
+/// - metadata[2+num_dims..2+2*num_dims]: input_strides
+/// - metadata[2+2*num_dims]: input_offset
+/// - metadata[2+2*num_dims+1]: condition_size
+/// - metadata[2+2*num_dims+2]: axis_flag (0 = None/flatten, 1 = axis specified)
+/// - metadata[2+2*num_dims+3]: axis_value (only valid if axis_flag == 1)
+pub fn compress_metadata(layout: &Layout, condition_size: usize, axis: Option<usize>) -> Vec<usize> {
+    let shape = layout.shape();
+    let ndim = shape.ndim();
+    let num_els = shape.size();
+
+    let mut metadata = Vec::with_capacity(2 + 2 * ndim + 4);
+    metadata.push(num_els);
+    metadata.push(ndim);
+    metadata.extend_from_slice(shape.dims());
+    metadata.extend_from_slice(layout.strides());
+    metadata.push(layout.offset());
+    metadata.push(condition_size);
+
+    match axis {
+        Some(a) => {
+            metadata.push(1); // axis_flag = 1 (axis specified)
+            metadata.push(a);
+        },
+        None => {
+            metadata.push(0); // axis_flag = 0 (flatten)
+            metadata.push(0); // placeholder
+        },
+    }
+
+    metadata
+}
+
 // ============================================================================
 // Conv Operations
 // ============================================================================

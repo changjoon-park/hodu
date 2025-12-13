@@ -234,6 +234,12 @@ impl VjpCompute for IndexingOp {
                     "Unique operation does not support gradients".to_string(),
                 ))
             },
+            IndexingOp::Compress => {
+                // Compress has data-dependent output shape, not differentiable
+                Err(HoduError::VjpFunctionNotFound(
+                    "Compress operation does not support gradients".to_string(),
+                ))
+            },
         }
     }
 }

@@ -24,7 +24,8 @@ ops!(
     unique_bitonic_step,
     unique_count,
     unique_mark,
-    unique_build
+    unique_build,
+    compress
 );
 
 /// Executes an index_select operation to extract elements along a dimension using indices.
@@ -621,6 +622,42 @@ pub fn call_unique_build(
     encoder.use_resource(counts, MTLResourceUsage::Write);
 
     let (thread_group_count, thread_group_size) = linear_split(&pipeline, num_els);
+    encoder.dispatch_thread_groups(thread_group_count, thread_group_size);
+
+    Ok(())
+}
+
+/// Executes compress operation to select elements based on boolean condition.
+#[allow(clippy::too_many_arguments)]
+pub fn call_compress(
+    kernel: Kernel,
+    kernels: &Kernels,
+    device: &Device,
+    ep: impl EncoderProvider,
+    input: BufferOffset,
+    condition: BufferOffset,
+    output: &Buffer,
+    metadata: &[usize],
+    counter: &Buffer,
+) -> Result<(), MetalKernelError> {
+    let pipeline = kernels.load_pipeline(device, Source::Indexing, kernel.0)?;
+
+    // condition_size is at metadata[2 + 2*num_dims + 1]
+    let num_dims = metadata[1];
+    let condition_size = metadata[2 + 2 * num_dims + 1];
+
+    let encoder = ep.encoder();
+    let encoder: &ComputeCommandEncoder = encoder.as_ref();
+    encoder.set_compute_pipeline_state(&pipeline);
+
+    set_params!(encoder, (&input, &condition, output, metadata, counter));
+
+    encoder.use_resource(input.buffer, MTLResourceUsage::Read);
+    encoder.use_resource(condition.buffer, MTLResourceUsage::Read);
+    encoder.use_resource(output, MTLResourceUsage::Write);
+    encoder.use_resource(counter, MTLResourceUsage::Write);
+
+    let (thread_group_count, thread_group_size) = linear_split(&pipeline, condition_size);
     encoder.dispatch_thread_groups(thread_group_count, thread_group_size);
 
     Ok(())

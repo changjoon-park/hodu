@@ -782,3 +782,144 @@ pub fn call_unique(storage: &CpuStorage, layout: &Layout) -> HoduResult<(CpuStor
 
     Ok((values, inverse_storage, counts, unique_count))
 }
+
+/// Execute compress operation to select elements based on boolean condition
+///
+/// # Arguments
+/// * `storage` - Input tensor storage
+/// * `layout` - Input tensor layout
+/// * `condition_storage` - Boolean condition tensor storage
+/// * `condition_layout` - Condition tensor layout
+/// * `axis` - Optional axis along which to compress (None = flatten)
+///
+/// # Returns
+/// A tuple of (output storage, true_count) where output contains the compressed elements
+pub fn call_compress(
+    storage: &CpuStorage,
+    layout: &Layout,
+    condition_storage: &CpuStorage,
+    condition_layout: &Layout,
+    axis: Option<usize>,
+) -> HoduResult<(CpuStorage, usize)> {
+    use hodu_cpu_kernels::ops_indexing::compress;
+
+    // Validate condition dtype is BOOL
+    if condition_storage.dtype() != DType::BOOL {
+        return Err(HoduError::DTypeMismatch {
+            expected: DType::BOOL,
+            got: condition_storage.dtype(),
+        });
+    }
+
+    // Validate condition is 1-D
+    if condition_layout.ndim() != 1 {
+        return Err(HoduError::BackendError(format!(
+            "compress condition must be 1-D, got {}D",
+            condition_layout.ndim()
+        )));
+    }
+
+    // Extract condition as contiguous bool slice
+    let condition = match condition_storage {
+        CpuStorage::BOOL(data) => data.as_slice(),
+        _ => unreachable!(),
+    };
+
+    let condition_size = condition_layout.size();
+    let dtype = storage.dtype();
+
+    // Validate axis and condition size
+    match axis {
+        Some(ax) => {
+            let input_shape = layout.shape();
+            if ax >= input_shape.ndim() {
+                return Err(HoduError::InvalidAxis {
+                    axis: ax as i32,
+                    ndim: input_shape.ndim(),
+                });
+            }
+            if condition_size != input_shape[ax] {
+                return Err(HoduError::BackendError(format!(
+                    "compress: condition size {} != axis {} size {}",
+                    condition_size, ax, input_shape[ax]
+                )));
+            }
+        },
+        None => {
+            let num_els = layout.size();
+            if condition_size != num_els {
+                return Err(HoduError::BackendError(format!(
+                    "compress: condition size {} != flattened input size {}",
+                    condition_size, num_els
+                )));
+            }
+        },
+    }
+
+    // Count true values for output allocation
+    let true_count = condition.iter().filter(|&&x| x).count();
+
+    // Handle empty case
+    if true_count == 0 {
+        let output = CpuDevice::allocate(0, dtype)?;
+        return Ok((output, 0));
+    }
+
+    // Calculate output size
+    let output_size = match axis {
+        Some(ax) => {
+            // Output shape: input shape with axis dimension replaced by true_count
+            let input_shape = layout.shape();
+            let mut size = 1;
+            for (i, &dim) in input_shape.dims().iter().enumerate() {
+                if i == ax {
+                    size *= true_count;
+                } else {
+                    size *= dim;
+                }
+            }
+            size
+        },
+        None => true_count, // Flatten mode: output is 1-D with true_count elements
+    };
+
+    // Generate metadata
+    let metadata = crate::op_metadatas::compress_metadata(layout, condition_size, axis);
+
+    // Get kernel based on dtype
+    let kernel = match dtype {
+        DType::BOOL => compress::BOOL,
+        DType::F8E4M3 => compress::F8E4M3,
+        #[cfg(feature = "f8e5m2")]
+        DType::F8E5M2 => compress::F8E5M2,
+        DType::BF16 => compress::BF16,
+        DType::F16 => compress::F16,
+        DType::F32 => compress::F32,
+        #[cfg(feature = "f64")]
+        DType::F64 => compress::F64,
+        DType::U8 => compress::U8,
+        #[cfg(feature = "u16")]
+        DType::U16 => compress::U16,
+        DType::U32 => compress::U32,
+        #[cfg(feature = "u64")]
+        DType::U64 => compress::U64,
+        DType::I8 => compress::I8,
+        #[cfg(feature = "i16")]
+        DType::I16 => compress::I16,
+        DType::I32 => compress::I32,
+        #[cfg(feature = "i64")]
+        DType::I64 => compress::I64,
+    };
+
+    // Allocate output
+    let mut output = CpuDevice::allocate(output_size, dtype)?;
+
+    // Call kernel
+    let input_ptr = storage.as_ptr() as *const c_void;
+    let condition_ptr = condition.as_ptr();
+    let output_ptr = output.as_mut_ptr() as *mut c_void;
+
+    hodu_cpu_kernels::call_compress(kernel, input_ptr, condition_ptr, output_ptr, &metadata)?;
+
+    Ok((output, true_count))
+}

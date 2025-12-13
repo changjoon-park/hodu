@@ -960,3 +960,141 @@ pub fn call_unique(
 
     Ok(result)
 }
+
+/// Compress operation - selects elements based on boolean condition
+pub fn call_compress(
+    input_storage: &CudaStorage,
+    input_layout: &Layout,
+    condition_storage: &CudaStorage,
+    condition_layout: &Layout,
+    axis: Option<usize>,
+) -> HoduResult<(CudaStorage, usize)> {
+    let dtype = input_storage.dtype();
+    let device = input_storage.get_device();
+    let device_id = input_storage.device_id();
+    let device_arc = Arc::clone(&input_storage.device);
+
+    // Validate condition dtype
+    if condition_storage.dtype() != DType::BOOL {
+        return Err(HoduError::DTypeMismatch {
+            expected: DType::BOOL,
+            got: condition_storage.dtype(),
+        });
+    }
+
+    let condition_size = condition_layout.size();
+
+    // Read condition from device to count true values
+    let condition_buf = match &condition_storage.data {
+        CudaStorageData::BOOL(data) => data,
+        _ => unreachable!(),
+    };
+
+    // Synchronize and read condition to host
+    device
+        .context()
+        .default_stream()
+        .synchronize()
+        .map_err(|e| HoduError::BackendError(format!("CUDA synchronize failed: {:?}", e)))?;
+
+    let mut condition_host = vec![false; condition_size];
+    device
+        .context()
+        .default_stream()
+        .memcpy_dtoh(condition_buf, &mut condition_host)
+        .map_err(|e| HoduError::BackendError(format!("Failed to read condition: {:?}", e)))?;
+
+    let true_count = condition_host.iter().filter(|&&x| x).count();
+
+    // Handle empty case
+    if true_count == 0 {
+        let output = device.new_buffer::<u8>(0)?;
+        return Ok((
+            CudaStorage::new(device_id, device_arc, CudaStorageData::from_slice_u8(output, dtype)?),
+            0,
+        ));
+    }
+
+    // Calculate output size
+    let output_size = match axis {
+        Some(ax) => {
+            let input_shape = input_layout.shape();
+            let mut size = 1;
+            for (i, &dim) in input_shape.dims().iter().enumerate() {
+                if i == ax {
+                    size *= true_count;
+                } else {
+                    size *= dim;
+                }
+            }
+            size
+        },
+        None => true_count,
+    };
+
+    // Generate metadata
+    let metadata = crate::op_metadatas::compress_metadata(input_layout, condition_size, axis);
+
+    // Get kernel name
+    let kernel_name = format!("hodu_cuda_compress_{}", dtype);
+    let kernel_name_static = crate::cache::kernel::get_kernel_name(kernel_name);
+    let kernel = kernels::Kernel(kernel_name_static);
+
+    // Create counter buffer (single u32, initialized to 0)
+    let mut counter_buffer = device.new_buffer::<u32>(1)?;
+    device
+        .context()
+        .default_stream()
+        .memcpy_stod(&[0u32])
+        .and_then(|zeroed| {
+            device
+                .context()
+                .default_stream()
+                .memcpy_dtod(&zeroed, &mut counter_buffer)
+        })
+        .map_err(|e| HoduError::BackendError(format!("Failed to initialize counter buffer: {:?}", e)))?;
+
+    macro_rules! call_compress_kernel {
+        ($input:expr, $ty:ty, $variant:ident) => {{
+            let mut output = device.new_buffer::<$ty>(output_size)?;
+            kernels::call_compress(
+                kernel,
+                device.kernels(),
+                device.context(),
+                $input,
+                condition_buf,
+                &mut output,
+                &metadata,
+                &mut counter_buffer,
+            )?;
+            Ok((
+                CudaStorage::new(device_id, device_arc.clone(), CudaStorageData::$variant(output)),
+                true_count,
+            ))
+        }};
+    }
+
+    match &input_storage.data {
+        CudaStorageData::BOOL(input) => call_compress_kernel!(input, bool, BOOL),
+        CudaStorageData::F8E4M3(input) => call_compress_kernel!(input, float8::F8E4M3, F8E4M3),
+        #[cfg(feature = "f8e5m2")]
+        CudaStorageData::F8E5M2(input) => call_compress_kernel!(input, float8::F8E5M2, F8E5M2),
+        CudaStorageData::BF16(input) => call_compress_kernel!(input, half::bf16, BF16),
+        CudaStorageData::F16(input) => call_compress_kernel!(input, half::f16, F16),
+        CudaStorageData::F32(input) => call_compress_kernel!(input, f32, F32),
+        #[cfg(feature = "f64")]
+        CudaStorageData::F64(input) => call_compress_kernel!(input, f64, F64),
+        CudaStorageData::U8(input) => call_compress_kernel!(input, u8, U8),
+        #[cfg(feature = "u16")]
+        CudaStorageData::U16(input) => call_compress_kernel!(input, u16, U16),
+        CudaStorageData::U32(input) => call_compress_kernel!(input, u32, U32),
+        #[cfg(feature = "u64")]
+        CudaStorageData::U64(input) => call_compress_kernel!(input, u64, U64),
+        CudaStorageData::I8(input) => call_compress_kernel!(input, i8, I8),
+        #[cfg(feature = "i16")]
+        CudaStorageData::I16(input) => call_compress_kernel!(input, i16, I16),
+        CudaStorageData::I32(input) => call_compress_kernel!(input, i32, I32),
+        #[cfg(feature = "i64")]
+        CudaStorageData::I64(input) => call_compress_kernel!(input, i64, I64),
+    }
+}

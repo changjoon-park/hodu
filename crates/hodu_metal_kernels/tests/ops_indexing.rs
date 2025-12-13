@@ -1,9 +1,10 @@
 use hodu_metal_kernels::{
     kernel::Kernels,
     kernels::{
-        call_nonzero_count, call_nonzero_fill, call_ops_onehot, call_unique_bitonic_step, call_unique_build,
-        call_unique_count, call_unique_mark, call_unique_prefix_sum, call_unique_sort, nonzero_count, nonzero_fill,
-        onehot, unique_bitonic_step, unique_build, unique_count, unique_mark, unique_sort, Kernel,
+        call_compress, call_nonzero_count, call_nonzero_fill, call_ops_onehot, call_unique_bitonic_step,
+        call_unique_build, call_unique_count, call_unique_mark, call_unique_prefix_sum, call_unique_sort, compress,
+        nonzero_count, nonzero_fill, onehot, unique_bitonic_step, unique_build, unique_count, unique_mark, unique_sort,
+        Kernel,
     },
     metal::{create_command_buffer, Buffer, Device},
     utils::BufferOffset,
@@ -539,4 +540,234 @@ fn test_unique_i32_single_element() {
     assert_eq!(values, vec![42]);
     assert_eq!(inverse, vec![0]);
     assert_eq!(counts, vec![1]);
+}
+
+// ============================================================================
+// COMPRESS TESTS
+// ============================================================================
+
+fn build_compress_metadata(
+    num_input_els: usize,
+    shape: &[usize],
+    strides: &[usize],
+    offset: usize,
+    condition_size: usize,
+    axis: Option<usize>,
+) -> Vec<usize> {
+    let num_dims = shape.len();
+    let mut metadata = Vec::with_capacity(2 + num_dims * 2 + 4);
+    metadata.push(num_input_els);
+    metadata.push(num_dims);
+    metadata.extend_from_slice(shape);
+    metadata.extend_from_slice(strides);
+    metadata.push(offset);
+    metadata.push(condition_size);
+    // axis_flag: 0 = None (flatten), 1 = Some(axis)
+    match axis {
+        None => {
+            metadata.push(0);
+            metadata.push(0); // placeholder
+        },
+        Some(ax) => {
+            metadata.push(1);
+            metadata.push(ax);
+        },
+    }
+    metadata
+}
+
+fn run_compress<T: Clone + Default>(
+    input: &[T],
+    condition: &[bool],
+    shape: &[usize],
+    axis: Option<usize>,
+    true_count: usize,
+    kernel: Kernel,
+) -> Vec<T> {
+    let device = device();
+    let kernels = Kernels::new();
+    let command_queue = device.new_command_queue().unwrap();
+    let command_buffer = create_command_buffer(&command_queue).unwrap();
+    let options = RESOURCE_OPTIONS;
+
+    let input_buffer = new_buffer(&device, input);
+    let condition_buffer = new_buffer(&device, condition);
+
+    // Calculate strides
+    let num_dims = shape.len();
+    let mut strides = vec![1usize; num_dims];
+    for i in (0..num_dims.saturating_sub(1)).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+
+    // Calculate output size
+    let output_size = if axis.is_none() {
+        // Flatten mode: output is [true_count]
+        true_count
+    } else {
+        // Axis mode: output is [shape_0, ..., true_count, ..., shape_n]
+        let ax = axis.unwrap();
+        let mut size = 1;
+        for (i, &s) in shape.iter().enumerate() {
+            if i == ax {
+                size *= true_count;
+            } else {
+                size *= s;
+            }
+        }
+        size
+    };
+
+    if output_size == 0 {
+        return vec![];
+    }
+
+    let output = device
+        .new_buffer(output_size * std::mem::size_of::<T>(), options)
+        .unwrap();
+    let counter = device.new_buffer(std::mem::size_of::<u32>(), options).unwrap();
+
+    // Initialize counter to 0
+    unsafe {
+        let ptr = counter.contents() as *mut u32;
+        *ptr = 0;
+    }
+
+    let num_input_els = input.len();
+    let metadata = build_compress_metadata(num_input_els, shape, &strides, 0, condition.len(), axis);
+
+    call_compress(
+        kernel,
+        &kernels,
+        &device,
+        &command_buffer,
+        BufferOffset::zero_offset(&input_buffer),
+        BufferOffset::zero_offset(&condition_buffer),
+        &output,
+        &metadata,
+        &counter,
+    )
+    .unwrap();
+
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+    read_to_vec(&output, output_size)
+}
+
+#[test]
+fn test_compress_f32_1d_flatten() {
+    // Input: [1, 2, 3, 4, 5]
+    // Condition: [true, false, true, false, true]
+    // Output: [1, 3, 5]
+    let input = vec![1.0f32, 2.0, 3.0, 4.0, 5.0];
+    let condition = vec![true, false, true, false, true];
+    let shape = vec![5];
+    let true_count = 3;
+
+    let result = run_compress(&input, &condition, &shape, None, true_count, compress::F32);
+
+    assert_eq!(result, vec![1.0, 3.0, 5.0]);
+}
+
+#[test]
+fn test_compress_i32_1d_flatten() {
+    // Input: [10, 20, 30, 40, 50]
+    // Condition: [false, true, true, false, false]
+    // Output: [20, 30]
+    let input = vec![10i32, 20, 30, 40, 50];
+    let condition = vec![false, true, true, false, false];
+    let shape = vec![5];
+    let true_count = 2;
+
+    let result = run_compress(&input, &condition, &shape, None, true_count, compress::I32);
+
+    assert_eq!(result, vec![20, 30]);
+}
+
+#[test]
+fn test_compress_f32_2d_flatten() {
+    // Input: [[1, 2, 3], [4, 5, 6]] (flattened: [1, 2, 3, 4, 5, 6])
+    // Condition: [true, false, true, false, true, false]
+    // Output: [1, 3, 5]
+    let input = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let condition = vec![true, false, true, false, true, false];
+    let shape = vec![2, 3];
+    let true_count = 3;
+
+    let result = run_compress(&input, &condition, &shape, None, true_count, compress::F32);
+
+    assert_eq!(result, vec![1.0, 3.0, 5.0]);
+}
+
+#[test]
+fn test_compress_f32_2d_axis0() {
+    // Input: [[1, 2], [3, 4], [5, 6]] shape [3, 2]
+    // Condition: [false, true, true] -> select rows 1 and 2
+    // Output: [[3, 4], [5, 6]] shape [2, 2]
+    let input = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let condition = vec![false, true, true];
+    let shape = vec![3, 2];
+    let true_count = 2;
+
+    let result = run_compress(&input, &condition, &shape, Some(0), true_count, compress::F32);
+
+    assert_eq!(result, vec![3.0, 4.0, 5.0, 6.0]);
+}
+
+#[test]
+fn test_compress_f32_2d_axis1() {
+    // Input: [[1, 2, 3], [4, 5, 6]] shape [2, 3]
+    // Condition: [true, false, true] -> select columns 0 and 2
+    // Output: [[1, 3], [4, 6]] shape [2, 2]
+    let input = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let condition = vec![true, false, true];
+    let shape = vec![2, 3];
+    let true_count = 2;
+
+    let result = run_compress(&input, &condition, &shape, Some(1), true_count, compress::F32);
+
+    assert_eq!(result, vec![1.0, 3.0, 4.0, 6.0]);
+}
+
+#[test]
+fn test_compress_f32_all_true() {
+    // Input: [1, 2, 3]
+    // Condition: [true, true, true]
+    // Output: [1, 2, 3] (same as input)
+    let input = vec![1.0f32, 2.0, 3.0];
+    let condition = vec![true, true, true];
+    let shape = vec![3];
+    let true_count = 3;
+
+    let result = run_compress(&input, &condition, &shape, None, true_count, compress::F32);
+
+    assert_eq!(result, vec![1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn test_compress_f32_single_true() {
+    // Input: [1, 2, 3, 4, 5]
+    // Condition: [false, false, true, false, false]
+    // Output: [3]
+    let input = vec![1.0f32, 2.0, 3.0, 4.0, 5.0];
+    let condition = vec![false, false, true, false, false];
+    let shape = vec![5];
+    let true_count = 1;
+
+    let result = run_compress(&input, &condition, &shape, None, true_count, compress::F32);
+
+    assert_eq!(result, vec![3.0]);
+}
+
+#[test]
+fn test_compress_u8() {
+    // Test with u8 type
+    let input = vec![1u8, 2, 3, 4, 5];
+    let condition = vec![true, false, true, false, true];
+    let shape = vec![5];
+    let true_count = 3;
+
+    let result = run_compress(&input, &condition, &shape, None, true_count, compress::U8);
+
+    assert_eq!(result, vec![1, 3, 5]);
 }

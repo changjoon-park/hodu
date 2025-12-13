@@ -882,3 +882,137 @@ UNIQUE_BUILD_OP(__nv_bfloat16, bf16)
 UNIQUE_BUILD_OP(__half, f16)
 UNIQUE_BUILD_OP(float, f32)
 UNIQUE_BUILD_OP(double, f64)
+
+// ============================================================================
+// COMPRESS OPERATION
+// ============================================================================
+//
+// Selects elements from input tensor based on boolean condition.
+// Similar to NumPy's np.compress.
+//
+// Metadata layout:
+// - metadata[0]: num_input_els
+// - metadata[1]: num_dims
+// - metadata[2..2+num_dims]: input_shape
+// - metadata[2+num_dims..2+2*num_dims]: input_strides
+// - metadata[2+2*num_dims]: input_offset
+// - metadata[2+2*num_dims+1]: condition_size
+// - metadata[2+2*num_dims+2]: axis_flag (0 = flatten, 1 = axis specified)
+// - metadata[2+2*num_dims+3]: axis_value
+
+#define COMPRESS_OP(TYPENAME, FN_NAME)                                                             \
+    extern "C" __global__ void hodu_cuda_##FN_NAME(const TYPENAME *input, const bool *condition,   \
+                                                   TYPENAME *output, const size_t *metadata,       \
+                                                   uint32_t *counter) {                            \
+        const size_t num_input_els = metadata[0];                                                  \
+        const size_t num_dims = metadata[1];                                                       \
+        const size_t *input_shape = metadata + 2;                                                  \
+        const size_t *input_strides = metadata + 2 + num_dims;                                     \
+        const size_t input_offset = metadata[2 + 2 * num_dims];                                    \
+        const size_t condition_size = metadata[2 + 2 * num_dims + 1];                              \
+        const size_t axis_flag = metadata[2 + 2 * num_dims + 2];                                   \
+        const size_t axis_value = metadata[2 + 2 * num_dims + 3];                                  \
+                                                                                                   \
+        if (axis_flag == 0) {                                                                      \
+            /* Flatten mode: each thread handles one condition index */                            \
+            for (uint32_t id = blockIdx.x * blockDim.x + threadIdx.x; id < condition_size;         \
+                 id += blockDim.x * gridDim.x) {                                                   \
+                if (!condition[id])                                                                \
+                    continue;                                                                      \
+                                                                                                   \
+                /* Count true values before current index for deterministic output order */        \
+                size_t out_idx = 0;                                                                \
+                for (size_t i = 0; i < id; i++) {                                                  \
+                    if (condition[i])                                                              \
+                        out_idx++;                                                                 \
+                }                                                                                  \
+                                                                                                   \
+                /* Calculate flat index from strided layout */                                     \
+                size_t flat_idx = input_offset;                                                    \
+                size_t temp = id;                                                                  \
+                for (int d = (int)num_dims - 1; d >= 0; d--) {                                     \
+                    size_t idx = temp % input_shape[d];                                            \
+                    temp /= input_shape[d];                                                        \
+                    flat_idx += idx * input_strides[d];                                            \
+                }                                                                                  \
+                                                                                                   \
+                output[out_idx] = input[flat_idx];                                                 \
+            }                                                                                      \
+        } else {                                                                                   \
+            /* Axis mode: each thread handles one condition index (axis slice) */                  \
+            for (uint32_t id = blockIdx.x * blockDim.x + threadIdx.x; id < condition_size;         \
+                 id += blockDim.x * gridDim.x) {                                                   \
+                if (!condition[id])                                                                \
+                    continue;                                                                      \
+                                                                                                   \
+                /* Count true values before current index for deterministic output order */        \
+                size_t out_slice_idx = 0;                                                          \
+                for (size_t i = 0; i < id; i++) {                                                  \
+                    if (condition[i])                                                              \
+                        out_slice_idx++;                                                           \
+                }                                                                                  \
+                                                                                                   \
+                /* Calculate slice size (elements per axis slice) */                               \
+                size_t slice_size = 1;                                                             \
+                for (size_t d = axis_value + 1; d < num_dims; d++) {                               \
+                    slice_size *= input_shape[d];                                                  \
+                }                                                                                  \
+                size_t outer_size = 1;                                                             \
+                for (size_t d = 0; d < axis_value; d++) {                                          \
+                    outer_size *= input_shape[d];                                                  \
+                }                                                                                  \
+                                                                                                   \
+                /* Calculate number of selected slices for output stride */                        \
+                size_t num_selected = 0;                                                           \
+                for (size_t i = 0; i < condition_size; i++) {                                      \
+                    if (condition[i])                                                              \
+                        num_selected++;                                                            \
+                }                                                                                  \
+                                                                                                   \
+                /* Copy entire slice */                                                            \
+                for (size_t outer = 0; outer < outer_size; outer++) {                              \
+                    for (size_t inner = 0; inner < slice_size; inner++) {                          \
+                        /* Calculate input index */                                                \
+                        size_t input_flat = input_offset;                                          \
+                        size_t temp_outer = outer;                                                 \
+                        for (int d = (int)axis_value - 1; d >= 0; d--) {                           \
+                            size_t dim_idx = temp_outer % input_shape[d];                          \
+                            temp_outer /= input_shape[d];                                          \
+                            input_flat += dim_idx * input_strides[d];                              \
+                        }                                                                          \
+                        input_flat += id * input_strides[axis_value];                              \
+                        size_t temp_inner = inner;                                                 \
+                        for (int d = (int)num_dims - 1; d > (int)axis_value; d--) {                \
+                            size_t dim_idx = temp_inner % input_shape[d];                          \
+                            temp_inner /= input_shape[d];                                          \
+                            input_flat += dim_idx * input_strides[d];                              \
+                        }                                                                          \
+                                                                                                   \
+                        /* Calculate output index: row-major order */                              \
+                        /* output shape: [...outer_dims..., num_selected, ...inner_dims...] */     \
+                        size_t out_flat = outer * num_selected * slice_size +                      \
+                                          out_slice_idx * slice_size + inner;                      \
+                                                                                                   \
+                        output[out_flat] = input[input_flat];                                      \
+                    }                                                                              \
+                }                                                                                  \
+            }                                                                                      \
+        }                                                                                          \
+    }
+
+// Define compress operations for all types
+COMPRESS_OP(bool, compress_bool)
+COMPRESS_OP(__nv_fp8_e4m3, compress_f8e4m3)
+COMPRESS_OP(__nv_fp8_e5m2, compress_f8e5m2)
+COMPRESS_OP(__nv_bfloat16, compress_bf16)
+COMPRESS_OP(__half, compress_f16)
+COMPRESS_OP(float, compress_f32)
+COMPRESS_OP(double, compress_f64)
+COMPRESS_OP(int8_t, compress_i8)
+COMPRESS_OP(int16_t, compress_i16)
+COMPRESS_OP(int32_t, compress_i32)
+COMPRESS_OP(int64_t, compress_i64)
+COMPRESS_OP(uint8_t, compress_u8)
+COMPRESS_OP(uint16_t, compress_u16)
+COMPRESS_OP(uint32_t, compress_u32)
+COMPRESS_OP(uint64_t, compress_u64)

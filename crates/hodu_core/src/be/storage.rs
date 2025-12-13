@@ -98,6 +98,16 @@ pub trait BackendStorageT: Sized {
     /// - counts: count of each unique value [unique_count], i32
     fn call_unique(&self, _: &Layout) -> HoduResult<(Self, Self, Self, usize)>; // (values, inverse, counts, unique_count)
 
+    /// Select elements based on boolean condition array
+    /// Returns (selected_elements, true_count)
+    fn call_compress(
+        &self,
+        _: &Layout,
+        _condition: &Self,
+        _condition_layout: &Layout,
+        _axis: Option<usize>,
+    ) -> HoduResult<(Self, usize)>;
+
     fn call_ops_conv(
         &self,
         _: &Layout,
@@ -974,6 +984,45 @@ impl BackendStorage {
                     unique_count,
                 ))
             },
+        }
+    }
+
+    pub(crate) fn call_compress(
+        &self,
+        layout: &Layout,
+        condition_storage: &Self,
+        condition_layout: &Layout,
+        axis: Option<usize>,
+    ) -> HoduResult<(Self, usize)> {
+        // Check devices match
+        let device = self.device();
+        let condition_device = condition_storage.device();
+        if device != condition_device {
+            return Err(HoduError::DeviceMismatch {
+                expected: device,
+                got: condition_device,
+            });
+        }
+
+        match (self, condition_storage) {
+            (Self::CPU(storage), Self::CPU(condition)) => {
+                let (result, count) = storage.call_compress(layout, condition, condition_layout, axis)?;
+                Ok((Self::CPU(result), count))
+            },
+            #[cfg(feature = "cuda")]
+            (Self::CUDA(storage), Self::CUDA(condition)) => {
+                let (result, count) = storage.call_compress(layout, condition, condition_layout, axis)?;
+                Ok((Self::CUDA(result), count))
+            },
+            #[cfg(feature = "metal")]
+            (Self::Metal(storage), Self::Metal(condition)) => {
+                let (result, count) = storage.call_compress(layout, condition, condition_layout, axis)?;
+                Ok((Self::Metal(result), count))
+            },
+            _ => Err(HoduError::DeviceMismatch {
+                expected: device,
+                got: condition_device,
+            }),
         }
     }
 

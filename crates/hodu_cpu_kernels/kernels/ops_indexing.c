@@ -1313,3 +1313,130 @@ UNIQUE_OP_INT(uint8_t, unique_u8)
 UNIQUE_OP_INT(uint16_t, unique_u16)
 UNIQUE_OP_INT(uint32_t, unique_u32)
 UNIQUE_OP_INT(uint64_t, unique_u64)
+
+// ============================================================================
+// COMPRESS OPERATIONS
+// ============================================================================
+//
+// Selects elements from input tensor based on a boolean condition array.
+// Similar to NumPy's np.compress(condition, a, axis).
+//
+// Metadata layout:
+// - metadata[0]: num_input_els (total number of input elements)
+// - metadata[1]: num_dims (number of dimensions)
+// - metadata[2..2+num_dims]: input_shape
+// - metadata[2+num_dims..2+2*num_dims]: input_strides
+// - metadata[2+2*num_dims]: input_offset
+// - metadata[2+2*num_dims+1]: condition_size
+// - metadata[2+2*num_dims+2]: axis_flag (0 = flatten, 1 = axis specified)
+// - metadata[2+2*num_dims+3]: axis_value (only used if axis_flag == 1)
+//
+// Two-pass operation:
+//   1. compress_count - counts True values in condition (done in Rust)
+//   2. compress_fill - copies selected elements to output
+
+/// Macro to implement compress operation with axis
+///
+/// @param TYPENAME C type for the operation
+/// @param FN_NAME Function name
+#define COMPRESS_OP(TYPENAME, FN_NAME)                                                             \
+    void hodu_cpu_##FN_NAME(const void *input_ptr, const bool *condition, void *output_ptr,        \
+                            const size_t *metadata) {                                              \
+        const TYPENAME *input = (const TYPENAME *)input_ptr;                                       \
+        TYPENAME *output = (TYPENAME *)output_ptr;                                                 \
+                                                                                                   \
+        const size_t num_input_els = metadata[0];                                                  \
+        const size_t num_dims = metadata[1];                                                       \
+        const size_t *input_shape = metadata + 2;                                                  \
+        const size_t *input_strides = metadata + 2 + num_dims;                                     \
+        const size_t input_offset = metadata[2 + 2 * num_dims];                                    \
+        const size_t condition_size = metadata[2 + 2 * num_dims + 1];                              \
+        const size_t axis_flag = metadata[2 + 2 * num_dims + 2];                                   \
+        const size_t axis = metadata[2 + 2 * num_dims + 3];                                        \
+                                                                                                   \
+        size_t out_idx = 0;                                                                        \
+                                                                                                   \
+        if (axis_flag == 0) {                                                                      \
+            /* Flatten mode: select elements where condition[i] is True */                         \
+            for (size_t i = 0; i < condition_size && i < num_input_els; i++) {                     \
+                if (condition[i]) {                                                                \
+                    /* Compute flat index from strided layout */                                   \
+                    size_t flat_idx = input_offset;                                                \
+                    size_t temp = i;                                                               \
+                    for (int d = (int)num_dims - 1; d >= 0; d--) {                                 \
+                        size_t idx = temp % input_shape[d];                                        \
+                        temp /= input_shape[d];                                                    \
+                        flat_idx += idx * input_strides[d];                                        \
+                    }                                                                              \
+                    output[out_idx++] = input[flat_idx];                                           \
+                }                                                                                  \
+            }                                                                                      \
+        } else {                                                                                   \
+            /* Axis mode: select slices along axis where condition[i] is True */                   \
+            /* Compute slice size (product of dims after axis) */                                  \
+            size_t slice_size = 1;                                                                 \
+            for (size_t d = axis + 1; d < num_dims; d++) {                                         \
+                slice_size *= input_shape[d];                                                      \
+            }                                                                                      \
+                                                                                                   \
+            /* Compute outer size (product of dims before axis) */                                 \
+            size_t outer_size = 1;                                                                 \
+            for (size_t d = 0; d < axis; d++) {                                                    \
+                outer_size *= input_shape[d];                                                      \
+            }                                                                                      \
+                                                                                                   \
+            /* Iterate over all combinations of outer and inner dimensions */                      \
+            for (size_t outer = 0; outer < outer_size; outer++) {                                  \
+                for (size_t cond_idx = 0; cond_idx < condition_size; cond_idx++) {                 \
+                    if (!condition[cond_idx])                                                      \
+                        continue;                                                                  \
+                                                                                                   \
+                    for (size_t inner = 0; inner < slice_size; inner++) {                          \
+                        /* Compute multi-dim indices */                                            \
+                        size_t multi_idx[32];                                                      \
+                                                                                                   \
+                        /* Outer indices */                                                        \
+                        size_t temp = outer;                                                       \
+                        for (int d = (int)axis - 1; d >= 0; d--) {                                 \
+                            multi_idx[d] = temp % input_shape[d];                                  \
+                            temp /= input_shape[d];                                                \
+                        }                                                                          \
+                                                                                                   \
+                        /* Axis index */                                                           \
+                        multi_idx[axis] = cond_idx;                                                \
+                                                                                                   \
+                        /* Inner indices */                                                        \
+                        temp = inner;                                                              \
+                        for (int d = (int)num_dims - 1; d > (int)axis; d--) {                      \
+                            multi_idx[d] = temp % input_shape[d];                                  \
+                            temp /= input_shape[d];                                                \
+                        }                                                                          \
+                                                                                                   \
+                        /* Compute flat input index */                                             \
+                        size_t flat_idx = input_offset;                                            \
+                        for (size_t d = 0; d < num_dims; d++) {                                    \
+                            flat_idx += multi_idx[d] * input_strides[d];                           \
+                        }                                                                          \
+                                                                                                   \
+                        output[out_idx++] = input[flat_idx];                                       \
+                    }                                                                              \
+                }                                                                                  \
+            }                                                                                      \
+        }                                                                                          \
+    }
+
+COMPRESS_OP(bool, compress_bool)
+COMPRESS_OP(f8e4m3_t, compress_f8e4m3)
+COMPRESS_OP(f8e5m2_t, compress_f8e5m2)
+COMPRESS_OP(bf16_t, compress_bf16)
+COMPRESS_OP(f16_t, compress_f16)
+COMPRESS_OP(float, compress_f32)
+COMPRESS_OP(double, compress_f64)
+COMPRESS_OP(int8_t, compress_i8)
+COMPRESS_OP(int16_t, compress_i16)
+COMPRESS_OP(int32_t, compress_i32)
+COMPRESS_OP(int64_t, compress_i64)
+COMPRESS_OP(uint8_t, compress_u8)
+COMPRESS_OP(uint16_t, compress_u16)
+COMPRESS_OP(uint32_t, compress_u32)
+COMPRESS_OP(uint64_t, compress_u64)

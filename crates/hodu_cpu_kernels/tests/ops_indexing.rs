@@ -1368,3 +1368,335 @@ fn test_unique_u8() {
     assert_eq!(inverse, vec![1, 0, 1, 0, 2]);
     assert_eq!(&counts[..unique_count], &[2, 2, 1]);
 }
+
+// ============================================================================
+// COMPRESS TESTS
+// ============================================================================
+
+/// Helper function to build compress metadata
+fn build_compress_metadata(
+    num_input_els: usize,
+    shape: &[usize],
+    strides: &[usize],
+    offset: usize,
+    condition_size: usize,
+    axis: Option<usize>,
+) -> Vec<usize> {
+    let num_dims = shape.len();
+    let mut metadata = Vec::new();
+    metadata.push(num_input_els);
+    metadata.push(num_dims);
+    metadata.extend(shape);
+    metadata.extend(strides);
+    metadata.push(offset);
+    metadata.push(condition_size);
+    match axis {
+        Some(ax) => {
+            metadata.push(1); // axis_flag = 1 (axis specified)
+            metadata.push(ax);
+        },
+        None => {
+            metadata.push(0); // axis_flag = 0 (flatten mode)
+            metadata.push(0); // axis_value (ignored)
+        },
+    }
+    metadata
+}
+
+#[test]
+fn test_compress_f32_1d_flatten() {
+    // Input: [1, 2, 3, 4, 5]
+    // Condition: [false, true, false, true, true]
+    // Output: [2, 4, 5]
+    let input = [1.0f32, 2.0, 3.0, 4.0, 5.0];
+    let condition = [false, true, false, true, true];
+    let true_count = condition.iter().filter(|&&x| x).count();
+    let mut output = vec![0.0f32; true_count];
+
+    let metadata = build_compress_metadata(5, &[5], &[1], 0, 5, None);
+
+    call_compress(
+        compress::F32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![2.0, 4.0, 5.0]);
+}
+
+#[test]
+fn test_compress_i32_1d_flatten() {
+    // Input: [10, 20, 30, 40, 50]
+    // Condition: [true, false, true, false, false]
+    // Output: [10, 30]
+    let input = [10i32, 20, 30, 40, 50];
+    let condition = [true, false, true, false, false];
+    let true_count = condition.iter().filter(|&&x| x).count();
+    let mut output = vec![0i32; true_count];
+
+    let metadata = build_compress_metadata(5, &[5], &[1], 0, 5, None);
+
+    call_compress(
+        compress::I32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![10, 30]);
+}
+
+#[test]
+fn test_compress_f32_2d_flatten() {
+    // Input: [[1, 2, 3], [4, 5, 6]]  (flattened: [1, 2, 3, 4, 5, 6])
+    // Condition: [false, true, true, false, false, true]
+    // Output: [2, 3, 6]
+    let input = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let condition = [false, true, true, false, false, true];
+    let true_count = condition.iter().filter(|&&x| x).count();
+    let mut output = vec![0.0f32; true_count];
+
+    let metadata = build_compress_metadata(6, &[2, 3], &[3, 1], 0, 6, None);
+
+    call_compress(
+        compress::F32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![2.0, 3.0, 6.0]);
+}
+
+#[test]
+fn test_compress_f32_2d_axis0() {
+    // Input: [[1, 2], [3, 4], [5, 6]]  (3x2)
+    // Condition: [false, true, true]  (select rows 1 and 2)
+    // Output: [[3, 4], [5, 6]]  (2x2)
+    let input = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let condition = [false, true, true];
+    let true_count = condition.iter().filter(|&&x| x).count();
+    let output_size = true_count * 2; // 2 rows * 2 cols
+    let mut output = vec![0.0f32; output_size];
+
+    let metadata = build_compress_metadata(6, &[3, 2], &[2, 1], 0, 3, Some(0));
+
+    call_compress(
+        compress::F32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![3.0, 4.0, 5.0, 6.0]);
+}
+
+#[test]
+fn test_compress_f32_2d_axis1() {
+    // Input: [[1, 2, 3], [4, 5, 6]]  (2x3)
+    // Condition: [true, false, true]  (select columns 0 and 2)
+    // Output: [[1, 3], [4, 6]]  (2x2)
+    let input = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let condition = [true, false, true];
+    let true_count = condition.iter().filter(|&&x| x).count();
+    let output_size = 2 * true_count; // 2 rows * 2 cols
+    let mut output = vec![0.0f32; output_size];
+
+    let metadata = build_compress_metadata(6, &[2, 3], &[3, 1], 0, 3, Some(1));
+
+    call_compress(
+        compress::F32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![1.0, 3.0, 4.0, 6.0]);
+}
+
+#[test]
+fn test_compress_i32_2d_axis0() {
+    // Input: [[10, 20], [30, 40], [50, 60]]  (3x2)
+    // Condition: [true, false, true]  (select rows 0 and 2)
+    // Output: [[10, 20], [50, 60]]  (2x2)
+    let input = [10i32, 20, 30, 40, 50, 60];
+    let condition = [true, false, true];
+    let true_count = condition.iter().filter(|&&x| x).count();
+    let output_size = true_count * 2;
+    let mut output = vec![0i32; output_size];
+
+    let metadata = build_compress_metadata(6, &[3, 2], &[2, 1], 0, 3, Some(0));
+
+    call_compress(
+        compress::I32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![10, 20, 50, 60]);
+}
+
+#[test]
+fn test_compress_f32_all_true() {
+    // Input: [1, 2, 3]
+    // Condition: [true, true, true]
+    // Output: [1, 2, 3]
+    let input = [1.0f32, 2.0, 3.0];
+    let condition = [true, true, true];
+    let true_count = 3;
+    let mut output = vec![0.0f32; true_count];
+
+    let metadata = build_compress_metadata(3, &[3], &[1], 0, 3, None);
+
+    call_compress(
+        compress::F32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn test_compress_f32_all_false() {
+    // Input: [1, 2, 3]
+    // Condition: [false, false, false]
+    // Output: [] (empty)
+    // When true_count = 0, we don't need to call the kernel
+    // This test verifies the edge case logic in the caller
+    let input = [1.0f32, 2.0, 3.0];
+    let condition = [false, false, false];
+    let true_count = condition.iter().filter(|&&c| c).count();
+
+    assert_eq!(true_count, 0);
+
+    // In real usage, when true_count is 0, we skip the kernel call
+    // and return an empty tensor directly
+    let output: Vec<f32> = if true_count == 0 {
+        vec![]
+    } else {
+        let mut out = vec![0.0f32; true_count];
+        let metadata = build_compress_metadata(input.len(), &[3], &[1], 0, condition.len(), None);
+        call_compress(
+            compress::F32,
+            input.as_ptr() as *const core::ffi::c_void,
+            condition.as_ptr(),
+            out.as_mut_ptr() as *mut core::ffi::c_void,
+            &metadata,
+        )
+        .unwrap();
+        out
+    };
+
+    assert!(output.is_empty());
+}
+
+#[test]
+fn test_compress_f32_single_true() {
+    // Input: [1, 2, 3, 4, 5]
+    // Condition: [false, false, true, false, false]
+    // Output: [3]
+    let input = [1.0f32, 2.0, 3.0, 4.0, 5.0];
+    let condition = [false, false, true, false, false];
+    let true_count = 1;
+    let mut output = vec![0.0f32; true_count];
+
+    let metadata = build_compress_metadata(5, &[5], &[1], 0, 5, None);
+
+    call_compress(
+        compress::F32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![3.0]);
+}
+
+#[test]
+fn test_compress_u8() {
+    // Test with u8 type
+    let input = [1u8, 2, 3, 4, 5];
+    let condition = [true, false, true, false, true];
+    let true_count = 3;
+    let mut output = vec![0u8; true_count];
+
+    let metadata = build_compress_metadata(5, &[5], &[1], 0, 5, None);
+
+    call_compress(
+        compress::U8,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![1, 3, 5]);
+}
+
+#[test]
+fn test_compress_bool() {
+    // Test with bool type
+    let input = [true, false, true, false, true];
+    let condition = [false, true, false, true, true];
+    let true_count = 3;
+    let mut output = vec![false; true_count];
+
+    let metadata = build_compress_metadata(5, &[5], &[1], 0, 5, None);
+
+    call_compress(
+        compress::BOOL,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![false, false, true]);
+}
+
+#[test]
+fn test_compress_f32_3d_axis1() {
+    // Input: [[[1, 2], [3, 4], [5, 6]], [[7, 8], [9, 10], [11, 12]]]  (2x3x2)
+    // Condition: [true, false, true]  (select slices at axis=1: indices 0 and 2)
+    // Output: [[[1, 2], [5, 6]], [[7, 8], [11, 12]]]  (2x2x2)
+    let input = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+    let condition = [true, false, true];
+    let true_count = 2;
+    let output_size = 2 * true_count * 2; // 2 * 2 * 2
+    let mut output = vec![0.0f32; output_size];
+
+    let metadata = build_compress_metadata(12, &[2, 3, 2], &[6, 2, 1], 0, 3, Some(1));
+
+    call_compress(
+        compress::F32,
+        input.as_ptr() as *const core::ffi::c_void,
+        condition.as_ptr(),
+        output.as_mut_ptr() as *mut core::ffi::c_void,
+        &metadata,
+    )
+    .unwrap();
+
+    assert_eq!(output, vec![1.0, 2.0, 5.0, 6.0, 7.0, 8.0, 11.0, 12.0]);
+}

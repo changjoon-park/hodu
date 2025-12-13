@@ -611,3 +611,96 @@ pub fn call_unique(
         unique_count,
     ))
 }
+
+/// Compress operation - selects elements based on boolean condition
+pub fn call_compress(
+    input_storage: &MetalStorage,
+    input_layout: &Layout,
+    condition_storage: &MetalStorage,
+    condition_layout: &Layout,
+    axis: Option<usize>,
+) -> HoduResult<(MetalStorage, usize)> {
+    let dtype = input_storage.dtype();
+    let device = input_storage.backend_device();
+
+    // Validate condition dtype
+    if condition_storage.dtype() != DType::BOOL {
+        return Err(HoduError::DTypeMismatch {
+            expected: DType::BOOL,
+            got: condition_storage.dtype(),
+        });
+    }
+
+    let condition_size = condition_layout.size();
+
+    // Count true values by reading condition buffer
+    // For Metal we need to sync and read
+    device.wait_until_completed()?;
+
+    let condition_ptr = condition_storage.buffer().contents() as *const bool;
+    let condition_slice = unsafe { std::slice::from_raw_parts(condition_ptr, condition_size) };
+    let true_count = condition_slice.iter().filter(|&&x| x).count();
+
+    // Handle empty case
+    if true_count == 0 {
+        let empty_buffer = device.new_buffer(0, dtype, "compress_output")?;
+        return Ok((MetalStorage::new(empty_buffer, device.clone(), 0, dtype), 0));
+    }
+
+    // Calculate output size
+    let output_size = match axis {
+        Some(ax) => {
+            let input_shape = input_layout.shape();
+            let mut size = 1;
+            for (i, &dim) in input_shape.dims().iter().enumerate() {
+                if i == ax {
+                    size *= true_count;
+                } else {
+                    size *= dim;
+                }
+            }
+            size
+        },
+        None => true_count,
+    };
+
+    // Generate metadata
+    let metadata = crate::op_metadatas::compress_metadata(input_layout, condition_size, axis);
+
+    // Create output buffer
+    let output_buffer = device.new_buffer(output_size, dtype, "compress_output")?;
+
+    // Create atomic counter buffer (single u32, initialized to 0)
+    let counter_buffer = device.new_buffer(1, DType::U32, "compress_counter")?;
+
+    // Get kernel name
+    let kernel_name = format!("hodu_metal_compress_{}", dtype);
+    let kernel_name_static = crate::cache::kernel::get_kernel_name(kernel_name);
+    let kernel = kernels::Kernel(kernel_name_static);
+
+    // Create buffer offsets
+    let input_offset = BufferOffset::zero_offset(input_storage.buffer());
+    let condition_offset = BufferOffset::zero_offset(condition_storage.buffer());
+
+    // Get command buffer and call kernel
+    let command_buffer = device.command_buffer()?;
+    kernels::call_compress(
+        kernel,
+        device.kernels(),
+        device.device(),
+        &command_buffer,
+        input_offset,
+        condition_offset,
+        &output_buffer,
+        &metadata,
+        &counter_buffer,
+    )?;
+
+    command_buffer.commit();
+    command_buffer.wait_until_completed();
+
+    Ok((
+        MetalStorage::new(output_buffer, device.clone(), output_size, dtype),
+        true_count,
+    ))
+}

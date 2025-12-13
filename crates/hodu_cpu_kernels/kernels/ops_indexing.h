@@ -14,6 +14,7 @@
 #ifndef OPS_INDEXING_H
 #define OPS_INDEXING_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -519,6 +520,64 @@ size_t hodu_cpu_unique_u16(const void *input, void *values, int32_t *inverse, in
 size_t hodu_cpu_unique_u32(const void *input, void *values, int32_t *inverse, int32_t *counts,
                            const size_t *metadata);
 size_t hodu_cpu_unique_u64(const void *input, void *values, int32_t *inverse, int32_t *counts,
+                           const size_t *metadata);
+
+// ============================================================================
+// COMPRESS OPERATIONS
+// ============================================================================
+//
+// Selects elements from input tensor based on a boolean condition array.
+// Similar to NumPy's np.compress(condition, a, axis).
+//
+// Signature:
+//   void hodu_cpu_compress_type(const void *input, const bool *condition,
+//                               void *output, const size_t *metadata)
+//
+// Parameters:
+//   input     - Pointer to input tensor data
+//   condition - Pointer to boolean condition array (1D)
+//   output    - Pointer to output buffer (pre-allocated)
+//   metadata  - Array describing operation (see below)
+//
+// Metadata layout:
+// - metadata[0]: num_input_els (total number of input elements)
+// - metadata[1]: num_dims (number of dimensions)
+// - metadata[2..2+num_dims]: input_shape
+// - metadata[2+num_dims..2+2*num_dims]: input_strides
+// - metadata[2+2*num_dims]: input_offset
+// - metadata[2+2*num_dims+1]: condition_size
+// - metadata[2+2*num_dims+2]: axis_flag (0 = flatten, 1 = axis specified)
+// - metadata[2+2*num_dims+3]: axis_value (only used if axis_flag == 1)
+
+void hodu_cpu_compress_bool(const void *input, const bool *condition, void *output,
+                            const size_t *metadata);
+void hodu_cpu_compress_f8e4m3(const void *input, const bool *condition, void *output,
+                              const size_t *metadata);
+void hodu_cpu_compress_f8e5m2(const void *input, const bool *condition, void *output,
+                              const size_t *metadata);
+void hodu_cpu_compress_bf16(const void *input, const bool *condition, void *output,
+                            const size_t *metadata);
+void hodu_cpu_compress_f16(const void *input, const bool *condition, void *output,
+                           const size_t *metadata);
+void hodu_cpu_compress_f32(const void *input, const bool *condition, void *output,
+                           const size_t *metadata);
+void hodu_cpu_compress_f64(const void *input, const bool *condition, void *output,
+                           const size_t *metadata);
+void hodu_cpu_compress_i8(const void *input, const bool *condition, void *output,
+                          const size_t *metadata);
+void hodu_cpu_compress_i16(const void *input, const bool *condition, void *output,
+                           const size_t *metadata);
+void hodu_cpu_compress_i32(const void *input, const bool *condition, void *output,
+                           const size_t *metadata);
+void hodu_cpu_compress_i64(const void *input, const bool *condition, void *output,
+                           const size_t *metadata);
+void hodu_cpu_compress_u8(const void *input, const bool *condition, void *output,
+                          const size_t *metadata);
+void hodu_cpu_compress_u16(const void *input, const bool *condition, void *output,
+                           const size_t *metadata);
+void hodu_cpu_compress_u32(const void *input, const bool *condition, void *output,
+                           const size_t *metadata);
+void hodu_cpu_compress_u64(const void *input, const bool *condition, void *output,
                            const size_t *metadata);
 
 #ifdef __cplusplus

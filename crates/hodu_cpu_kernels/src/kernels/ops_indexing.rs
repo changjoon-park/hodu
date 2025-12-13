@@ -25,7 +25,8 @@ ops!(
     onehot,
     nonzero_count,
     nonzero_fill,
-    unique
+    unique,
+    compress
 );
 
 macro_rules! declare_and_dispatch_index_select {
@@ -848,4 +849,99 @@ pub fn call_unique(
     metadata: &[usize],
 ) -> usize {
     unsafe { dispatch_unique(kernel_name.0, input, values, inverse, counts, metadata.as_ptr()) }
+}
+
+// ============================================================================
+// COMPRESS OPERATIONS
+// ============================================================================
+
+macro_rules! declare_and_dispatch_compress {
+    ($($op:ident),* $(,)?) => {
+        paste::paste! {
+            extern "C" {
+                $(
+                    fn [<hodu_cpu_ $op _bool>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _f8e4m3>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _f8e5m2>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _bf16>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _f16>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _f32>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _f64>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _i8>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _i16>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _i32>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _i64>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _u8>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _u16>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _u32>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                    fn [<hodu_cpu_ $op _u64>](input: *const c_void, condition: *const bool, output: *mut c_void, metadata: *const usize);
+                )*
+            }
+
+            unsafe fn dispatch_compress(
+                name: &str,
+                input: *const c_void,
+                condition: *const bool,
+                output: *mut c_void,
+                metadata: *const usize,
+            ) {
+                match name {
+                    $(
+                        concat!("hodu_cpu_", stringify!($op), "_bool") => [<hodu_cpu_ $op _bool>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_f8e4m3") => [<hodu_cpu_ $op _f8e4m3>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_f8e5m2") => [<hodu_cpu_ $op _f8e5m2>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_bf16") => [<hodu_cpu_ $op _bf16>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_f16") => [<hodu_cpu_ $op _f16>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_f32") => [<hodu_cpu_ $op _f32>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_f64") => [<hodu_cpu_ $op _f64>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_i8") => [<hodu_cpu_ $op _i8>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_i16") => [<hodu_cpu_ $op _i16>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_i32") => [<hodu_cpu_ $op _i32>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_i64") => [<hodu_cpu_ $op _i64>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_u8") => [<hodu_cpu_ $op _u8>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_u16") => [<hodu_cpu_ $op _u16>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_u32") => [<hodu_cpu_ $op _u32>](input, condition, output, metadata),
+                        concat!("hodu_cpu_", stringify!($op), "_u64") => [<hodu_cpu_ $op _u64>](input, condition, output, metadata),
+                    )*
+                    _ => panic!("Unknown compress operation: {}", name),
+                }
+            }
+        }
+    };
+}
+
+declare_and_dispatch_compress!(compress);
+
+/// Execute compress operation to select elements based on boolean condition
+///
+/// # Arguments
+/// * `kernel_name` - The compress kernel to execute (e.g., compress::F32)
+/// * `input` - Pointer to input tensor data
+/// * `condition` - Pointer to boolean condition array
+/// * `output` - Pointer to output buffer (pre-allocated based on true count)
+/// * `metadata` - Tensor metadata array
+///
+/// # Metadata layout
+/// - metadata[0]: num_input_els (total number of input elements)
+/// - metadata[1]: num_dims (number of dimensions)
+/// - metadata[2..2+num_dims]: input_shape
+/// - metadata[2+num_dims..2+2*num_dims]: input_strides
+/// - metadata[2+2*num_dims]: input_offset
+/// - metadata[2+2*num_dims+1]: condition_size
+/// - metadata[2+2*num_dims+2]: axis_flag (0 = flatten, 1 = axis specified)
+/// - metadata[2+2*num_dims+3]: axis_value
+///
+/// # Safety
+/// Caller must ensure output buffer has sufficient capacity for the compressed elements.
+pub fn call_compress(
+    kernel_name: crate::kernels::macros::Kernel,
+    input: *const c_void,
+    condition: *const bool,
+    output: *mut c_void,
+    metadata: &[usize],
+) -> Result<()> {
+    unsafe {
+        dispatch_compress(kernel_name.0, input, condition, output, metadata.as_ptr());
+    }
+    Ok(())
 }

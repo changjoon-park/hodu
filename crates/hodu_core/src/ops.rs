@@ -513,7 +513,8 @@ pub enum IndexingOp {
     ScatterMin,
     Onehot,
     Nonzero,
-    Unique, // no-backprop
+    Unique,   // no-backprop
+    Compress, // no-backprop (data-dependent output shape)
 }
 
 impl fmt::Display for IndexingOp {
@@ -529,6 +530,7 @@ impl fmt::Display for IndexingOp {
             Self::Onehot => write!(f, "onehot"),
             Self::Nonzero => write!(f, "nonzero"),
             Self::Unique => write!(f, "unique"),
+            Self::Compress => write!(f, "compress"),
         }
     }
 }

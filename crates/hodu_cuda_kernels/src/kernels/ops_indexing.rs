@@ -21,7 +21,8 @@ ops!(
     unique_bitonic_step,
     unique_count,
     unique_mark,
-    unique_build
+    unique_build,
+    compress
 );
 
 /// Execute an index_select operation
@@ -655,6 +656,55 @@ where
                 .arg(inverse)
                 .arg(counts)
                 .arg(&metadata_dev);
+        })
+        .map_err(|e| CudaKernelError::LaunchError(format!("Failed to launch kernel: {:?}", e)))?;
+    }
+
+    Ok(())
+}
+
+/// Execute compress operation to select elements based on boolean condition.
+#[allow(clippy::too_many_arguments)]
+pub fn call_compress<T>(
+    kernel: Kernel,
+    kernels: &crate::kernel::Kernels,
+    context: &crate::cuda::CudaContext,
+    input: &CudaSlice<T>,
+    condition: &CudaSlice<bool>,
+    output: &mut CudaSlice<T>,
+    metadata: &[usize],
+    counter: &mut CudaSlice<u32>,
+) -> Result<()>
+where
+    T: cudarc::driver::DeviceRepr,
+{
+    let func = kernels.load_function(context, Source::OpsIndexing, kernel.0)?;
+
+    let stream = context.default_stream();
+    let metadata_dev = stream
+        .memcpy_stod(metadata)
+        .map_err(|e| CudaKernelError::MemoryError(format!("Failed to copy metadata: {:?}", e)))?;
+
+    // condition_size is at metadata[2 + 2*num_dims + 1]
+    let num_dims = metadata[1];
+    let condition_size = metadata[2 + 2 * num_dims + 1];
+
+    let block_size = 256u32;
+    let grid_size = (condition_size as u32).div_ceil(block_size).max(1);
+
+    let cfg = LaunchConfig {
+        grid_dim: (grid_size, 1, 1),
+        block_dim: (block_size, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    unsafe {
+        func.launch(&stream, cfg, |args| {
+            args.arg(input)
+                .arg(condition)
+                .arg(output)
+                .arg(&metadata_dev)
+                .arg(counter);
         })
         .map_err(|e| CudaKernelError::LaunchError(format!("Failed to launch kernel: {:?}", e)))?;
     }

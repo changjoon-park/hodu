@@ -1,8 +1,8 @@
 use crate::{
     error::HoduResult,
     ops::{
-        GatherParams, IndexPutParams, IndexSelectParams, IndexingOp, NonzeroParams, OnehotoParams, Op, OpParams,
-        ScatterAddParams, ScatterMaxParams, ScatterMinParams, ScatterParams, UniqueParams,
+        CompressParams, GatherParams, IndexPutParams, IndexSelectParams, IndexingOp, NonzeroParams, OnehotoParams, Op,
+        OpParams, ScatterAddParams, ScatterMaxParams, ScatterMinParams, ScatterParams, UniqueParams,
     },
     scalar::Scalar,
     tensor::{create_builder_tensor, from_storage_with_context, gradient, Tensor},
@@ -819,6 +819,180 @@ impl Tensor {
             let counts = from_storage_with_context(counts_storage, counts_layout, true, false);
 
             Ok((values, inverse, counts))
+        }
+    }
+
+    /// Selects elements from the input tensor based on a boolean condition.
+    ///
+    /// Like NumPy's `np.compress(condition, a, axis)`:
+    /// - condition: 1-D boolean tensor specifying which elements to select
+    /// - axis: Optional axis along which to compress. If None, input is flattened first.
+    ///
+    /// Note: The output size is data-dependent (count of True values in condition).
+    /// In capture mode, the maximum possible size is allocated.
+    /// This operation does not support gradients.
+    ///
+    /// # Arguments
+    /// * `condition` - 1-D boolean tensor
+    /// * `axis` - Optional axis along which to compress. If None, input is flattened.
+    ///
+    /// # Returns
+    /// A tensor containing elements selected where condition is True.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let a = Tensor::from_slice(&[1, 2, 3, 4, 5, 6], &[3, 2])?;  // [[1, 2], [3, 4], [5, 6]]
+    /// let condition = Tensor::from_slice(&[false, true, true], &[3])?;
+    /// let result = a.compress(&condition, Some(0))?;  // [[3, 4], [5, 6]]
+    /// ```
+    pub fn compress<A: Into<Option<i32>>>(&self, condition: &Self, axis: A) -> HoduResult<Self> {
+        use crate::error::HoduError;
+
+        let axis_opt: Option<i32> = axis.into();
+
+        // Validate devices match
+        validate_same_device(&[self, condition], Op::Indexing(IndexingOp::Compress))?;
+        validate_dtype_for_device(self.dtype(), self.device())?;
+        validate_dtype_for_op(self.dtype(), Op::Indexing(IndexingOp::Compress))?;
+
+        // Validate condition is BOOL
+        if condition.dtype() != DType::BOOL {
+            return Err(HoduError::DTypeMismatch {
+                expected: DType::BOOL,
+                got: condition.dtype(),
+            });
+        }
+
+        // Validate condition is 1-D
+        if condition.ndim() != 1 {
+            return Err(HoduError::BackendError(format!(
+                "compress condition must be 1-D, got {}D",
+                condition.ndim()
+            )));
+        }
+
+        let self_layout = self.layout();
+        let condition_layout = condition.layout();
+        let condition_size = condition_layout.size();
+
+        // Normalize and validate axis
+        let axis_usize: Option<usize> = match axis_opt {
+            Some(ax) => {
+                let ndim = self.ndim() as i32;
+                let normalized = if ax < 0 { ndim + ax } else { ax };
+                if normalized < 0 || normalized >= ndim {
+                    return Err(HoduError::InvalidAxis {
+                        axis: ax,
+                        ndim: self.ndim(),
+                    });
+                }
+                let ax_usize = normalized as usize;
+                // Validate condition size matches axis dimension
+                if condition_size != self.shape()[ax_usize] {
+                    return Err(HoduError::BackendError(format!(
+                        "compress: condition size {} != axis {} size {}",
+                        condition_size,
+                        ax_usize,
+                        self.shape()[ax_usize]
+                    )));
+                }
+                Some(ax_usize)
+            },
+            None => {
+                // Flatten mode: condition size must match total elements
+                let num_els = self_layout.size();
+                if condition_size != num_els {
+                    return Err(HoduError::BackendError(format!(
+                        "compress: condition size {} != flattened input size {}",
+                        condition_size, num_els
+                    )));
+                }
+                None
+            },
+        };
+
+        // Convert axis to Scalar for params
+        let axis_scalar: Option<Scalar> = axis_opt.map(|ax| Scalar::from(ax));
+
+        if crate::snapshot::capture::is_active() {
+            // In capture mode, use symbolic shape for data-dependent output
+            let dynamic_dim_id = DynamicDimId::new();
+
+            // Compute max output shape
+            let (max_shape, symbolic_shape) = match axis_usize {
+                Some(ax) => {
+                    // Output shape: input shape with axis dimension replaced by condition_size (max)
+                    let input_shape = self.shape();
+                    let mut max_dims = Vec::with_capacity(input_shape.ndim());
+                    let mut symbolic_dims = Vec::with_capacity(input_shape.ndim());
+
+                    for (i, &dim) in input_shape.dims().iter().enumerate() {
+                        if i == ax {
+                            max_dims.push(condition_size); // Max is all True
+                            symbolic_dims.push(Dim::dynamic_with_id(dynamic_dim_id, Some(condition_size)));
+                        } else {
+                            max_dims.push(dim);
+                            symbolic_dims.push(Dim::Concrete(dim));
+                        }
+                    }
+                    (Shape::from(max_dims), SymbolicShape::new(symbolic_dims))
+                },
+                None => {
+                    // Flatten mode: output is 1-D with max size = condition_size
+                    let max_dims = vec![condition_size];
+                    let symbolic_dims = vec![Dim::dynamic_with_id(dynamic_dim_id, Some(condition_size))];
+                    (Shape::from(max_dims), SymbolicShape::new(symbolic_dims))
+                },
+            };
+
+            let symbolic_layout = SymbolicLayout::from_shape(&symbolic_shape)
+                .expect("Symbolic shape with max_bound should create valid layout");
+            let max_result_layout = Layout::from_shape(&max_shape);
+
+            // Compress is non-differentiable
+            let requires_grad = false;
+            let (result_id, result_tensor) =
+                create_builder_tensor(max_result_layout.clone(), self.dtype(), requires_grad);
+
+            let op_params = OpParams::Compress(CompressParams {
+                axis: axis_scalar,
+                dynamic_count_dim: Some(dynamic_dim_id),
+            });
+
+            crate::snapshot::capture::capture_operation_with_symbolic(
+                Op::Indexing(IndexingOp::Compress),
+                Some(op_params),
+                vec![self.id(), condition.id()],
+                result_id,
+                vec![self_layout, condition_layout],
+                max_result_layout,
+                Some(symbolic_layout),
+            )?;
+
+            Ok(result_tensor)
+        } else {
+            let (storage, true_count) = self.with_storage(|storage| {
+                condition.with_storage(|condition_storage| {
+                    storage.call_compress(&self_layout, condition_storage, &condition_layout, axis_usize)
+                })
+            })?;
+
+            // Compute actual output shape based on true_count
+            let result_shape = match axis_usize {
+                Some(ax) => {
+                    let input_shape = self.shape();
+                    let mut output_dims = input_shape.dims().to_vec();
+                    output_dims[ax] = true_count;
+                    Shape::from(output_dims)
+                },
+                None => Shape::from(vec![true_count]),
+            };
+            let result_layout = Layout::from_shape(&result_shape);
+
+            // Compress is non-differentiable
+            let result = from_storage_with_context(storage, result_layout, true, false);
+
+            Ok(result)
         }
     }
 }

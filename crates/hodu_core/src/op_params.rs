@@ -187,6 +187,15 @@ pub struct UniqueParams {
     pub dynamic_count_dim: Option<DynamicDimId>,
 }
 
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CompressParams {
+    /// Axis to compress along (None = flatten input first)
+    pub axis: Option<Scalar>,
+    /// Dynamic dimension ID for the count of True values in condition
+    pub dynamic_count_dim: Option<DynamicDimId>,
+}
+
 // Conv Operations
 
 #[derive(Debug, Clone)]
@@ -571,6 +580,7 @@ pub enum OpParams {
     Onehoto(OnehotoParams),
     Nonzero(NonzeroParams),
     Unique(UniqueParams),
+    Compress(CompressParams),
 
     // Conv
     Conv1d(Conv1dParams),

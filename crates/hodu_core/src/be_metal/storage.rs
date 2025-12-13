@@ -515,6 +515,16 @@ impl BackendStorageT for MetalStorage {
         ops_indexing::call_unique(self, layout)
     }
 
+    fn call_compress(
+        &self,
+        layout: &Layout,
+        condition: &Self,
+        condition_layout: &Layout,
+        axis: Option<usize>,
+    ) -> HoduResult<(Self, usize)> {
+        ops_indexing::call_compress(self, layout, condition, condition_layout, axis)
+    }
+
     fn to_dtype(&self, layout: &Layout, target_dtype: DType) -> HoduResult<Self> {
         if self.dtype == target_dtype {
             // Still need to make it contiguous according to layout
