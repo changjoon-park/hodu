@@ -1019,6 +1019,7 @@ impl BackendStorage {
                 let (result, count) = storage.call_compress(layout, condition, condition_layout, axis)?;
                 Ok((Self::Metal(result), count))
             },
+            #[cfg(any(feature = "cuda", feature = "metal"))]
             _ => Err(HoduError::DeviceMismatch {
                 expected: device,
                 got: condition_device,
