@@ -448,6 +448,61 @@ impl Tensor {
         Ok(result)
     }
 
+    pub fn repeat_interleave<D: Into<Scalar>>(&self, repeats: usize, dim: D) -> HoduResult<Self> {
+        if repeats == 0 {
+            return Err(HoduError::InvalidLayout {
+                reason: "repeats must be greater than 0".to_string(),
+            });
+        }
+
+        if repeats == 1 {
+            return Ok(self.clone());
+        }
+
+        let dim_scalar = dim.into();
+        let dim_i32 = dim_scalar.to_i32();
+        let ndim = self.ndim() as i32;
+
+        let dim_idx = if dim_i32 < 0 {
+            (ndim + dim_i32) as usize
+        } else {
+            dim_i32 as usize
+        };
+
+        if dim_idx >= self.ndim() {
+            return Err(HoduError::InvalidLayout {
+                reason: format!(
+                    "dimension {} out of range for tensor with {} dimensions",
+                    dim_i32,
+                    self.ndim()
+                ),
+            });
+        }
+
+        let current_shape = self.shape();
+        let current_dims = current_shape.dims();
+
+        // Step 1: Add a new dimension after the target dim
+        // [a, b, c] with dim=1 -> [a, b, 1, c]
+        let mut expanded_shape = current_dims.to_vec();
+        expanded_shape.insert(dim_idx + 1, 1);
+        let result = self.reshape(&expanded_shape)?;
+
+        // Step 2: Broadcast the new dimension to repeats
+        // [a, b, 1, c] -> [a, b, repeats, c]
+        let mut broadcast_shape = expanded_shape;
+        broadcast_shape[dim_idx + 1] = repeats;
+        let result = result.broadcast(&broadcast_shape)?;
+
+        // Step 3: Reshape to merge dim and the repeated dimension
+        // [a, b, repeats, c] -> [a, b*repeats, c]
+        let mut final_shape = current_dims.to_vec();
+        final_shape[dim_idx] *= repeats;
+        let result = result.reshape(&final_shape)?;
+
+        Ok(result)
+    }
+
     pub fn slice<D: Into<Scalar>, S: Into<Scalar> + Copy>(
         &self,
         dim: D,

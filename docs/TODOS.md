@@ -112,15 +112,8 @@
 **DataSet**
 - [x] Implement Dataset
 
-**Tensor-level Normalization Ops:** (🟢 Nice-to-have - nn modules use basic ops)
-- [ ] Implement batch_norm tensor op - fused `(x - mean) / sqrt(var + eps) * γ + β`
-- [ ] Implement layer_norm tensor op - fused normalize last N dimensions
-- [ ] Implement group_norm tensor op - fused per-group normalization
-- [ ] Implement instance_norm tensor op - fused per-instance normalization
-- [ ] Implement rms_norm tensor op - fused `x / sqrt(mean(x²) + eps) * γ`
-
 **Tensor Manipulation Ops:** (🟡 Important)
-- [ ] Implement tile/repeat_interleave - repeat tensor elements
+- [x] Implement repeat/repeat_interleave - repeat tensor elements
 - [ ] Implement roll - circular shift along axes (PyTorch)
 - [ ] Implement cumprod - cumulative product (like cumsum)
 

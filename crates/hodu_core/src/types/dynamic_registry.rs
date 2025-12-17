@@ -37,6 +37,7 @@ pub fn clear_resolved_dimensions() {
 
 /// Returns the number of currently resolved dimensions
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn resolved_count() -> usize {
     RESOLVED_DIMS.with(|dims| dims.borrow().len())
 }

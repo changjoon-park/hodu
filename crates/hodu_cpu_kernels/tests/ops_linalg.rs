@@ -5,6 +5,7 @@ fn approx(v: Vec<f32>, digits: i32) -> Vec<f32> {
     v.iter().map(|t| f32::round(t * b) / b).collect()
 }
 
+#[allow(dead_code)]
 fn approx_i32(v: Vec<i32>, _digits: i32) -> Vec<i32> {
     v // integers don't need approximation
 }
