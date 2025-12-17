@@ -124,6 +124,7 @@ pub mod capabilities {
     pub const FORMAT_SAVE_TENSOR: &str = "format.save_tensor";
     pub const BACKEND_RUN: &str = "backend.run";
     pub const BACKEND_BUILD: &str = "backend.build";
+    pub const BACKEND_SUPPORTED_DEVICES: &str = "backend.supported_devices";
     pub const BACKEND_SUPPORTED_TARGETS: &str = "backend.supported_targets";
 }
 
@@ -136,6 +137,27 @@ pub mod capabilities {
 pub struct InitializeParams {
     pub plugin_version: String,
     pub protocol_version: String,
+}
+
+/// Plugin metadata
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginMetadataRpc {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Supported target triples (e.g., "x86_64-*-*", "aarch64-apple-darwin")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_targets: Option<Vec<String>>,
+    /// Minimum required hodu version (semver, e.g., "0.1.0")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_hodu_version: Option<String>,
 }
 
 /// Initialize response result
@@ -152,6 +174,8 @@ pub struct InitializeResult {
     pub tensor_extensions: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub devices: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<PluginMetadataRpc>,
 }
 
 /// Load model request params
@@ -301,6 +325,23 @@ impl Response {
             id,
         }
     }
+
+    /// Check if this is a success response
+    pub fn is_success(&self) -> bool {
+        self.result.is_some() && self.error.is_none()
+    }
+
+    /// Check if this is an error response
+    pub fn is_error(&self) -> bool {
+        self.error.is_some() && self.result.is_none()
+    }
+
+    /// Check if this response is valid per JSON-RPC 2.0 spec
+    ///
+    /// A valid response must have exactly one of `result` or `error`, not both, not neither.
+    pub fn is_valid(&self) -> bool {
+        matches!((&self.result, &self.error), (Some(_), None) | (None, Some(_)))
+    }
 }
 
 impl Notification {
@@ -317,7 +358,11 @@ impl Notification {
             percent,
             message: message.into(),
         };
-        Self::new(methods::NOTIFY_PROGRESS, Some(serde_json::to_value(params).unwrap()))
+        // ProgressParams only contains primitive types (Option<u8>, String) which always serialize
+        Self::new(
+            methods::NOTIFY_PROGRESS,
+            Some(serde_json::to_value(params).expect("ProgressParams serialization cannot fail")),
+        )
     }
 
     pub fn log(level: impl Into<String>, message: impl Into<String>) -> Self {
@@ -325,7 +370,11 @@ impl Notification {
             level: level.into(),
             message: message.into(),
         };
-        Self::new(methods::NOTIFY_LOG, Some(serde_json::to_value(params).unwrap()))
+        // LogParams only contains primitive types (String, String) which always serialize
+        Self::new(
+            methods::NOTIFY_LOG,
+            Some(serde_json::to_value(params).expect("LogParams serialization cannot fail")),
+        )
     }
 }
 

@@ -2,7 +2,7 @@
 
 use crate::output;
 use clap::Args;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Args)]
 pub struct CleanArgs {
@@ -61,9 +61,9 @@ pub fn execute(args: CleanArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn clean_directory(path: &PathBuf, name: &str, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn clean_directory(path: &Path, name: &str, dry_run: bool) -> Result<(), Box<dyn std::error::Error>> {
     let size = dir_size(path)?;
-    let size_str = format_size(size);
+    let size_str = output::format_size(size);
 
     if dry_run {
         output::skipping(&format!("{} ({}) - dry run", name, size_str));
@@ -76,7 +76,7 @@ fn clean_directory(path: &PathBuf, name: &str, dry_run: bool) -> Result<(), Box<
     Ok(())
 }
 
-fn dir_size(path: &PathBuf) -> Result<u64, Box<dyn std::error::Error>> {
+fn dir_size(path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
     let mut size = 0;
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
@@ -92,20 +92,4 @@ fn dir_size(path: &PathBuf) -> Result<u64, Box<dyn std::error::Error>> {
         size = std::fs::metadata(path)?.len();
     }
     Ok(size)
-}
-
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} bytes", bytes)
-    }
 }

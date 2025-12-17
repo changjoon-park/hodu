@@ -1,11 +1,12 @@
 //! Tensor loading utilities
 
+use crate::utils::core_dtype_to_plugin;
 use hodu_core::format::hdt;
 use hodu_plugin::{PluginDType, TensorData};
-use std::path::PathBuf;
+use std::path::Path;
 
 pub fn load_tensor_file(
-    path: &PathBuf,
+    path: &Path,
     expected_shape: &[usize],
     expected_dtype: PluginDType,
 ) -> Result<TensorData, Box<dyn std::error::Error>> {
@@ -19,7 +20,7 @@ pub fn load_tensor_file(
 }
 
 fn load_tensor_hdt(
-    path: &PathBuf,
+    path: &Path,
     expected_shape: &[usize],
     expected_dtype: PluginDType,
 ) -> Result<TensorData, Box<dyn std::error::Error>> {
@@ -53,7 +54,7 @@ fn load_tensor_hdt(
 }
 
 fn load_tensor_json(
-    path: &PathBuf,
+    path: &Path,
     expected_shape: &[usize],
     expected_dtype: PluginDType,
 ) -> Result<TensorData, Box<dyn std::error::Error>> {
@@ -107,27 +108,6 @@ fn load_tensor_json(
 
 pub fn str_to_plugin_dtype(s: &str) -> Result<PluginDType, Box<dyn std::error::Error>> {
     s.parse::<PluginDType>().map_err(|e| e.into())
-}
-
-fn core_dtype_to_plugin(dtype: hodu_core::types::DType) -> PluginDType {
-    use hodu_core::types::DType;
-    match dtype {
-        DType::BOOL => PluginDType::BOOL,
-        DType::F8E4M3 => PluginDType::F8E4M3,
-        DType::F8E5M2 => PluginDType::F8E5M2,
-        DType::BF16 => PluginDType::BF16,
-        DType::F16 => PluginDType::F16,
-        DType::F32 => PluginDType::F32,
-        DType::F64 => PluginDType::F64,
-        DType::U8 => PluginDType::U8,
-        DType::U16 => PluginDType::U16,
-        DType::U32 => PluginDType::U32,
-        DType::U64 => PluginDType::U64,
-        DType::I8 => PluginDType::I8,
-        DType::I16 => PluginDType::I16,
-        DType::I32 => PluginDType::I32,
-        DType::I64 => PluginDType::I64,
-    }
 }
 
 fn json_array_to_bytes(arr: &[serde_json::Value], dtype: PluginDType) -> Result<Vec<u8>, Box<dyn std::error::Error>> {

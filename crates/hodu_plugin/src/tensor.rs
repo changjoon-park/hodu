@@ -157,10 +157,45 @@ pub struct TensorData {
     pub dtype: PluginDType,
 }
 
+/// Error type for tensor data validation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TensorDataError {
+    /// Data size doesn't match expected size from shape and dtype
+    SizeMismatch { expected: usize, actual: usize },
+}
+
+impl std::fmt::Display for TensorDataError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SizeMismatch { expected, actual } => {
+                write!(f, "Data size mismatch: expected {} bytes, got {}", expected, actual)
+            },
+        }
+    }
+}
+
+impl std::error::Error for TensorDataError {}
+
 impl TensorData {
-    /// Create new tensor data
+    /// Create new tensor data without validation
     pub fn new(data: Vec<u8>, shape: Vec<usize>, dtype: PluginDType) -> Self {
         Self { data, shape, dtype }
+    }
+
+    /// Create new tensor data with validation
+    ///
+    /// Returns an error if the data size doesn't match the expected size
+    /// calculated from shape and dtype.
+    pub fn new_checked(data: Vec<u8>, shape: Vec<usize>, dtype: PluginDType) -> Result<Self, TensorDataError> {
+        let numel: usize = shape.iter().product();
+        let expected_size = numel * dtype.size_in_bytes();
+        if data.len() != expected_size {
+            return Err(TensorDataError::SizeMismatch {
+                expected: expected_size,
+                actual: data.len(),
+            });
+        }
+        Ok(Self { data, shape, dtype })
     }
 
     /// Number of elements in the tensor

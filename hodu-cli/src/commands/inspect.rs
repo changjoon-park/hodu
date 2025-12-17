@@ -4,19 +4,14 @@
 
 use crate::output::{self, colors};
 use crate::plugins::{PluginManager, PluginRegistry};
+use crate::utils::{core_dtype_to_plugin, path_to_str};
 use clap::Args;
 use hodu_core::format::hdt;
 use hodu_core::ops::Op;
 use hodu_core::snapshot::Snapshot;
 use hodu_core::tensor::Tensor;
-use hodu_plugin::{PluginDType, TensorData};
+use hodu_plugin::TensorData;
 use std::path::{Path, PathBuf};
-
-/// Convert a path to a string, returning an error if the path is not valid UTF-8
-fn path_to_str(path: &Path) -> Result<&str, Box<dyn std::error::Error>> {
-    path.to_str()
-        .ok_or_else(|| format!("Invalid UTF-8 in path: {}", path.display()).into())
-}
 
 #[derive(Args)]
 pub struct InspectArgs {
@@ -514,25 +509,4 @@ fn load_tensor_data(path: &str) -> Result<TensorData, Box<dyn std::error::Error>
         .to_bytes()
         .map_err(|e| format!("Failed to get tensor bytes: {}", e))?;
     Ok(TensorData::new(data, shape, dtype))
-}
-
-fn core_dtype_to_plugin(dtype: hodu_core::types::DType) -> PluginDType {
-    use hodu_core::types::DType;
-    match dtype {
-        DType::BOOL => PluginDType::BOOL,
-        DType::F8E4M3 => PluginDType::F8E4M3,
-        DType::F8E5M2 => PluginDType::F8E5M2,
-        DType::BF16 => PluginDType::BF16,
-        DType::F16 => PluginDType::F16,
-        DType::F32 => PluginDType::F32,
-        DType::F64 => PluginDType::F64,
-        DType::U8 => PluginDType::U8,
-        DType::U16 => PluginDType::U16,
-        DType::U32 => PluginDType::U32,
-        DType::U64 => PluginDType::U64,
-        DType::I8 => PluginDType::I8,
-        DType::I16 => PluginDType::I16,
-        DType::I32 => PluginDType::I32,
-        DType::I64 => PluginDType::I64,
-    }
 }

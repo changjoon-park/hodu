@@ -6,21 +6,28 @@
 //!
 //! ```ignore
 //! use hodu_plugin_sdk::{
-//!     rpc::{LoadModelParams, LoadModelResult, RpcError},
+//!     rpc::{RunParams, RunResult, RpcError},
 //!     server::PluginServer,
+//!     Context,
 //! };
 //!
-//! fn main() {
-//!     let server = PluginServer::new("my-format", env!("CARGO_PKG_VERSION"))
-//!         .model_extensions(vec!["onnx"])
-//!         .method("format.load_model", handle_load_model);
-//!
-//!     server.run().unwrap();
-//! }
-//!
-//! fn handle_load_model(params: LoadModelParams) -> Result<LoadModelResult, RpcError> {
+//! async fn handle_run(ctx: Context, params: RunParams) -> Result<RunResult, RpcError> {
+//!     // Check for cancellation periodically
+//!     if ctx.is_cancelled() {
+//!         return Err(RpcError::cancelled());
+//!     }
 //!     // Implementation
 //!     todo!()
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     PluginServer::new("my-backend", env!("CARGO_PKG_VERSION"))
+//!         .devices(vec!["cpu"])
+//!         .method("backend.run", handle_run)
+//!         .run()
+//!         .await
+//!         .unwrap();
 //! }
 //! ```
 //!
@@ -44,11 +51,15 @@
 
 mod artifact;
 mod backend;
+mod context;
 pub mod server;
 mod tensor;
 
 // Re-export rpc module from hodu_plugin
 pub use hodu_plugin::rpc;
+
+// Re-export Context for async handlers
+pub use context::Context;
 
 // Re-export from hodu_plugin (common types shared with hodu-cli)
 pub use hodu_plugin::{BuildTarget, Device, PluginDType, PluginError, PluginResult, TensorData, PLUGIN_VERSION};
@@ -61,6 +72,9 @@ pub use tensor::{SdkDType, TensorDataExt};
 
 // Re-export notification helpers for convenience
 pub use server::{log_debug, log_error, log_info, log_warn, notify_log, notify_progress};
+
+// Re-export middleware/hook types
+pub use server::{PreRequestAction, RequestInfo, ResponseInfo};
 
 // Plugin SDK specific types (for plugin development only)
 pub use artifact::*;

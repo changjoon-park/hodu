@@ -496,9 +496,10 @@ fn remove_plugin(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
     let registry_path = PluginRegistry::default_path()?;
     let mut registry = PluginRegistry::load(&registry_path)?;
 
-    // Find the plugin
-    let plugin = registry.find(&args.name);
-    if plugin.is_none() {
+    // Find the plugin (try various name formats)
+    let plugin = if let Some(p) = registry.find(&args.name) {
+        p
+    } else {
         let backend_name = format!("hodu-backend-{}", args.name);
         let format_name = format!("hodu-format-{}", args.name);
 
@@ -514,10 +515,8 @@ fn remove_plugin(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
             list_installed_plugins(&registry)
         )
         .into());
-    }
+    };
 
-    // SAFETY: We just checked is_none() above, so plugin must be Some
-    let plugin = plugin.expect("plugin exists after is_none check");
     let name = plugin.name.clone();
     let version = plugin.version.clone();
 

@@ -27,7 +27,6 @@ pub struct PluginVersionEntry {
 #[derive(Debug, serde::Deserialize)]
 pub struct RegistryPlugin {
     pub name: String,
-    #[allow(dead_code)]
     pub description: Option<String>,
     pub git: String,
     pub path: Option<String>,
@@ -69,7 +68,17 @@ pub fn install_from_registry(
 
     // Find plugin
     let plugin = registry.plugin.iter().find(|p| p.name == name).ok_or_else(|| {
-        let available: Vec<_> = registry.plugin.iter().map(|p| p.name.as_str()).collect();
+        let available: Vec<_> = registry
+            .plugin
+            .iter()
+            .map(|p| {
+                if let Some(desc) = &p.description {
+                    format!("{} - {}", p.name, desc)
+                } else {
+                    p.name.clone()
+                }
+            })
+            .collect();
         format!(
             "Plugin '{}' not found in registry.\n\nAvailable plugins:\n  {}",
             name,

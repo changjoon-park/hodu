@@ -5,24 +5,19 @@
 use crate::output;
 use crate::plugins::{PluginManager, PluginRegistry};
 use crate::tensor::{load_tensor_file, save_outputs};
+use crate::utils::{core_dtype_to_plugin, path_to_str, plugin_dtype_to_core};
 use clap::Args;
 use hodu_core::format::hdt;
 use hodu_core::snapshot::Snapshot;
 use hodu_core::tensor::Tensor;
-use hodu_core::types::{DType, Device as CoreDevice, Shape};
+use hodu_core::types::{Device as CoreDevice, Shape};
 use hodu_plugin::rpc::TensorInput;
-use hodu_plugin::{Device, PluginDType, TensorData};
+use hodu_plugin::{current_host_triple, Device, TensorData};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-/// Convert a path to a string, returning an error if the path is not valid UTF-8
-fn path_to_str(path: &Path) -> Result<&str, Box<dyn std::error::Error>> {
-    path.to_str()
-        .ok_or_else(|| format!("Invalid UTF-8 in path: {}", path.display()).into())
-}
 
 #[derive(Args)]
 pub struct RunArgs {
@@ -197,7 +192,7 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     let snapshot_content = std::fs::read(&snapshot_path).map_err(|e| format!("Failed to read snapshot: {}", e))?;
     let mut hasher = Sha256::new();
     hasher.update(&snapshot_content);
-    hasher.update(current_target_triple().as_bytes());
+    hasher.update(current_host_triple().as_bytes());
     let snapshot_hash = hex::encode(hasher.finalize());
 
     // Determine library extension and cache path
@@ -224,7 +219,7 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         output::compiling(&format!("{} ({})", model_name, device));
         backend_client.build(
             path_to_str(&snapshot_path)?,
-            &current_target_triple(),
+            current_host_triple(),
             &device,
             "sharedlib",
             path_to_str(&library_path)?,
@@ -466,27 +461,6 @@ fn friendly_backend_error(device: &Device, registry: &PluginRegistry) -> String 
     msg
 }
 
-fn current_target_triple() -> String {
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    return "x86_64-unknown-linux-gnu".to_string();
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    return "aarch64-unknown-linux-gnu".to_string();
-    #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
-    return "x86_64-apple-darwin".to_string();
-    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-    return "aarch64-apple-darwin".to_string();
-    #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
-    return "x86_64-pc-windows-msvc".to_string();
-    #[cfg(not(any(
-        all(target_arch = "x86_64", target_os = "linux"),
-        all(target_arch = "aarch64", target_os = "linux"),
-        all(target_arch = "x86_64", target_os = "macos"),
-        all(target_arch = "aarch64", target_os = "macos"),
-        all(target_arch = "x86_64", target_os = "windows"),
-    )))]
-    return String::new();
-}
-
 fn load_tensor_data(path: &str) -> Result<TensorData, Box<dyn std::error::Error>> {
     let tensor = hdt::load(path).map_err(|e| format!("Failed to load HDT: {}", e))?;
     let shape: Vec<usize> = tensor.shape().dims().to_vec();
@@ -495,47 +469,6 @@ fn load_tensor_data(path: &str) -> Result<TensorData, Box<dyn std::error::Error>
         .to_bytes()
         .map_err(|e| format!("Failed to get tensor bytes: {}", e))?;
     Ok(TensorData::new(data, shape, dtype))
-}
-
-fn core_dtype_to_plugin(dtype: DType) -> PluginDType {
-    match dtype {
-        DType::BOOL => PluginDType::BOOL,
-        DType::F8E4M3 => PluginDType::F8E4M3,
-        DType::F8E5M2 => PluginDType::F8E5M2,
-        DType::BF16 => PluginDType::BF16,
-        DType::F16 => PluginDType::F16,
-        DType::F32 => PluginDType::F32,
-        DType::F64 => PluginDType::F64,
-        DType::U8 => PluginDType::U8,
-        DType::U16 => PluginDType::U16,
-        DType::U32 => PluginDType::U32,
-        DType::U64 => PluginDType::U64,
-        DType::I8 => PluginDType::I8,
-        DType::I16 => PluginDType::I16,
-        DType::I32 => PluginDType::I32,
-        DType::I64 => PluginDType::I64,
-    }
-}
-
-fn plugin_dtype_to_core(dtype: PluginDType) -> DType {
-    match dtype {
-        PluginDType::BOOL => DType::BOOL,
-        PluginDType::F8E4M3 => DType::F8E4M3,
-        PluginDType::F8E5M2 => DType::F8E5M2,
-        PluginDType::BF16 => DType::BF16,
-        PluginDType::F16 => DType::F16,
-        PluginDType::F32 => DType::F32,
-        PluginDType::F64 => DType::F64,
-        PluginDType::U8 => DType::U8,
-        PluginDType::U16 => DType::U16,
-        PluginDType::U32 => DType::U32,
-        PluginDType::U64 => DType::U64,
-        PluginDType::I8 => DType::I8,
-        PluginDType::I16 => DType::I16,
-        PluginDType::I32 => DType::I32,
-        PluginDType::I64 => DType::I64,
-        _ => DType::F32, // fallback for future dtypes
-    }
 }
 
 fn save_tensor_data(

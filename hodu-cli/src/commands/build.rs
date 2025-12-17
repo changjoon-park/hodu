@@ -4,16 +4,11 @@
 
 use crate::output;
 use crate::plugins::{PluginManager, PluginRegistry};
+use crate::utils::path_to_str;
 use clap::Args;
 use hodu_core::snapshot::Snapshot;
 use hodu_plugin::BuildTarget;
 use std::path::{Path, PathBuf};
-
-/// Convert a path to a string, returning an error if the path is not valid UTF-8
-fn path_to_str(path: &Path) -> Result<&str, Box<dyn std::error::Error>> {
-    path.to_str()
-        .ok_or_else(|| format!("Invalid UTF-8 in path: {}", path.display()).into())
-}
 
 #[derive(Args)]
 pub struct BuildArgs {
@@ -118,8 +113,8 @@ pub fn execute(args: BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
         model.clone()
     };
 
-    // Load snapshot for validation
-    let _snapshot = Snapshot::load(&snapshot_path)?;
+    // Validate snapshot is loadable before building
+    Snapshot::load(&snapshot_path)?;
 
     // Determine build format from arg or output extension
     let format = determine_format(&args.format, &output);
