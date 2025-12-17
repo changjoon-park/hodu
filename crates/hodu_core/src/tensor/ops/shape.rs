@@ -503,6 +503,50 @@ impl Tensor {
         Ok(result)
     }
 
+    pub fn roll<D: Into<Scalar>>(&self, shift: i64, dim: D) -> HoduResult<Self> {
+        let dim_scalar = dim.into();
+        let dim_i32 = dim_scalar.to_i32();
+        let ndim = self.ndim() as i32;
+
+        let dim_idx = if dim_i32 < 0 {
+            (ndim + dim_i32) as usize
+        } else {
+            dim_i32 as usize
+        };
+
+        if dim_idx >= self.ndim() {
+            return Err(HoduError::InvalidLayout {
+                reason: format!(
+                    "dimension {} out of range for tensor with {} dimensions",
+                    dim_i32,
+                    self.ndim()
+                ),
+            });
+        }
+
+        let dim_size = self.shape().dims()[dim_idx] as i64;
+
+        if dim_size == 0 {
+            return Ok(self.clone());
+        }
+
+        // Normalize shift to be within [0, dim_size)
+        let shift = ((shift % dim_size) + dim_size) % dim_size;
+
+        if shift == 0 {
+            return Ok(self.clone());
+        }
+
+        let split_point = (dim_size - shift) as i32;
+
+        // Split into two parts and concatenate in reverse order
+        // roll([1,2,3,4], 1) -> concat([4], [1,2,3]) -> [4,1,2,3]
+        let first = self.slice(dim_idx as i32, 0, Some(split_point), 1)?;
+        let second = self.slice(dim_idx as i32, split_point, None, 1)?;
+
+        Tensor::concat(&[&second, &first], dim_idx as i32)
+    }
+
     pub fn slice<D: Into<Scalar>, S: Into<Scalar> + Copy>(
         &self,
         dim: D,
