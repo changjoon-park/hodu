@@ -4,22 +4,23 @@ use hodu_plugin_sdk::{
     hdss,
     rpc::{RpcError, RunParams, RunResult},
     server::PluginServer,
-    TensorData,
+    Context, TensorData,
 };
 use std::collections::HashMap;
 
-fn main() {
+#[hodu_plugin_sdk::main]
+async fn main() {
     let server = PluginServer::new("{{NAME}}", env!("CARGO_PKG_VERSION"))
         .devices(vec!["cpu"])
         .method("backend.run", handle_run);
 
-    if let Err(e) = server.run() {
+    if let Err(e) = server.run().await {
         eprintln!("Plugin error: {}", e);
         std::process::exit(1);
     }
 }
 
-fn handle_run(params: RunParams) -> Result<RunResult, RpcError> {
+async fn handle_run(_ctx: Context, params: RunParams) -> Result<RunResult, RpcError> {
     let snapshot = hdss::load(&params.snapshot_path)
         .map_err(|e| RpcError::internal_error(format!("Failed to load snapshot: {}", e)))?;
 
@@ -31,6 +32,9 @@ fn handle_run(params: RunParams) -> Result<RunResult, RpcError> {
     }
 
     // TODO: Implement your model execution logic here
+    // Use _ctx.is_cancelled() to check for cancellation
+    // Use _ctx.notify_progress(percent, message) for progress updates
+
     Err(RpcError::internal_error(format!(
         "Backend '{}' execution not implemented. Model has {} nodes, {} inputs provided.",
         params.device,

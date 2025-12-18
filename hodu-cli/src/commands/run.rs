@@ -18,6 +18,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// Minimum timeout in seconds
+const MIN_TIMEOUT_SECS: u64 = 1;
+/// Maximum timeout in seconds (1 hour)
+const MAX_TIMEOUT_SECS: u64 = 3600;
+/// Known device prefixes for validation
+const KNOWN_DEVICE_PREFIXES: &[&str] = &["cpu", "metal", "cuda", "rocm", "vulkan", "directml"];
+
 #[derive(Args)]
 pub struct RunArgs {
     /// Model file (.onnx, .hdss, etc.)
@@ -68,6 +75,17 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Check if model file exists
     if !args.model.exists() {
         return Err(format!("Model file not found: {}", args.model.display()).into());
+    }
+
+    // Validate timeout range
+    if let Some(timeout) = args.timeout {
+        if !(MIN_TIMEOUT_SECS..=MAX_TIMEOUT_SECS).contains(&timeout) {
+            return Err(format!(
+                "Timeout must be between {} and {} seconds (got: {})",
+                MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS, timeout
+            )
+            .into());
+        }
     }
 
     // Get model extension
@@ -277,6 +295,15 @@ fn parse_inputs(
         }
 
         let name = parts[0];
+
+        // Validate input name
+        if name.is_empty() {
+            return Err("Input name cannot be empty".into());
+        }
+        if name.chars().any(|c| c.is_control() || c == '\0') {
+            return Err(format!("Input name '{}' contains invalid characters", name).into());
+        }
+
         let path = expand_path(parts[1])?;
 
         if !path.exists() {
@@ -413,8 +440,18 @@ fn parse_device(device_str: &str) -> Result<Device, Box<dyn std::error::Error>> 
                 Err(format!("Invalid device format: {}", device_str).into())
             }
         },
-        // Allow any other device string for extensibility
-        _ => Ok(device),
+        // Allow any other device string for extensibility, but warn if unknown
+        _ => {
+            let is_known = KNOWN_DEVICE_PREFIXES.iter().any(|prefix| device.starts_with(prefix));
+            if !is_known {
+                eprintln!(
+                    "Warning: Unknown device '{}'. Known devices: {}",
+                    device,
+                    KNOWN_DEVICE_PREFIXES.join(", ")
+                );
+            }
+            Ok(device)
+        },
     }
 }
 

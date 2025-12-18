@@ -13,6 +13,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+/// Maximum number of concurrent plugin processes
+const MAX_PLUGIN_PROCESSES: usize = 16;
+
 /// Unified plugin manager for CLI
 ///
 /// Manages both format and backend plugin processes with CLI-specific
@@ -71,6 +74,11 @@ impl PluginManager {
                 .get_mut(name)
                 .expect("key exists after contains_key check")
                 .client);
+        }
+
+        // Check process limit before spawning new process
+        if self.processes.len() >= MAX_PLUGIN_PROCESSES {
+            return Err(ProcessError::TooManyProcesses(MAX_PLUGIN_PROCESSES));
         }
 
         // Find plugin in registry
@@ -217,6 +225,7 @@ pub enum ProcessError {
     BinaryNotFound(String),
     Spawn(String),
     Client(ClientError),
+    TooManyProcesses(usize),
 }
 
 impl std::fmt::Display for ProcessError {
@@ -240,6 +249,9 @@ impl std::fmt::Display for ProcessError {
             },
             ProcessError::Spawn(e) => write!(f, "Failed to spawn plugin: {}", e),
             ProcessError::Client(e) => write!(f, "Client error: {}", e),
+            ProcessError::TooManyProcesses(max) => {
+                write!(f, "Too many plugin processes (max: {})", max)
+            },
         }
     }
 }

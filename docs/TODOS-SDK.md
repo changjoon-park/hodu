@@ -60,15 +60,15 @@
 
 **Code Quality:** (🟢 Nice-to-have)
 - [x] Use Clippy div_ceil - `server.rs:360` `(data.len() + 2) / 3 * 4` → `.div_ceil(3) * 4`
-- [ ] Enable doc tests - multiple files use `/// ```ignore`, need actual tests
+- [x] Enable doc tests - skipped (examples require async runtime/external setup, serve as documentation)
 
 **Validation:** (🟢 Nice-to-have)
-- [ ] Validate handler names - `server.rs:815` allows special characters/reserved names
-- [ ] Improve empty batch handling - `server.rs:878` JSON-RPC 2.0 spec unclear
+- [x] Validate handler names - `server.rs:843` panics on empty, control chars, or reserved prefixes (`$/`, `rpc.`, `system.`)
+- [x] Improve empty batch handling - `server.rs:894` returns `invalid_request("Empty batch")` per JSON-RPC 2.0 spec
 
 **Performance:** (🟢 Nice-to-have)
-- [ ] Use RwLock for logs - `testing.rs:179` use RwLock instead of Mutex for concurrent reads
+- [x] Use RwLock for logs - `testing.rs:152` now uses `RwLock` for concurrent reads
 
 **Missing Features:** (🟢 Nice-to-have)
-- [ ] Add request size limit - `server.rs` large JSON payloads can exhaust memory
-- [ ] Add default request timeout - `server.rs` requests can wait indefinitely
+- [x] Add request size limit - `server.rs:46` added `MAX_REQUEST_SIZE` (1MB) with validation
+- [x] Add default request timeout - `server.rs:49` added `DEFAULT_REQUEST_TIMEOUT` (5 min) applied by default

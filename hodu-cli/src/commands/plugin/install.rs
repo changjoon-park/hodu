@@ -9,6 +9,38 @@ use hodu_plugin::PLUGIN_VERSION;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Maximum manifest.json file size (1MB)
+const MAX_MANIFEST_SIZE: u64 = 1024 * 1024;
+
+/// RAII guard for temporary directories - ensures cleanup on drop
+struct TempDirGuard {
+    path: PathBuf,
+}
+
+impl TempDirGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        if self.path.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&self.path) {
+                eprintln!(
+                    "Warning: Failed to remove temp directory {}: {}",
+                    self.path.display(),
+                    e
+                );
+            }
+        }
+    }
+}
+
 /// Parsed manifest info: (name, version, plugin_version, plugin_type, capabilities)
 type ManifestInfo = (String, String, String, PluginType, PluginCapabilities);
 
@@ -193,11 +225,12 @@ pub fn install_from_git(
     // Validate URL before cloning
     validate_git_url(url)?;
 
-    // Create temp directory
-    let temp_dir = std::env::temp_dir().join(format!("hodu_plugin_{}", std::process::id()));
-    if temp_dir.exists() {
-        std::fs::remove_dir_all(&temp_dir)?;
+    // Create temp directory with RAII cleanup (cleaned up automatically on drop, even on panic)
+    let temp_dir_path = std::env::temp_dir().join(format!("hodu_plugin_{}", std::process::id()));
+    if temp_dir_path.exists() {
+        std::fs::remove_dir_all(&temp_dir_path)?;
     }
+    let temp_dir = TempDirGuard::new(temp_dir_path);
 
     // Clone repository (quietly)
     let mut git_cmd = Command::new("git");
@@ -205,7 +238,7 @@ pub fn install_from_git(
     if tag.is_none() {
         git_cmd.arg("--depth").arg("1");
     }
-    git_cmd.arg(url).arg(&temp_dir);
+    git_cmd.arg(url).arg(temp_dir.path());
 
     let status = git_cmd.status()?;
     if !status.success() {
@@ -218,22 +251,20 @@ pub fn install_from_git(
             .arg("checkout")
             .arg("-q")
             .arg(t)
-            .current_dir(&temp_dir)
+            .current_dir(temp_dir.path())
             .status()?;
         if !status.success() {
-            std::fs::remove_dir_all(&temp_dir)?;
             return Err(format!("Failed to checkout: {}", t).into());
         }
     }
 
     // Determine install path (with optional subdir)
     let install_path = match subdir {
-        Some(s) => temp_dir.join(s),
-        None => temp_dir.clone(),
+        Some(s) => temp_dir.path().join(s),
+        None => temp_dir.path().to_path_buf(),
     };
 
     if !install_path.exists() {
-        std::fs::remove_dir_all(&temp_dir)?;
         return Err(format!("Subdirectory '{}' not found in repository", subdir.unwrap_or("")).into());
     }
 
@@ -243,14 +274,8 @@ pub fn install_from_git(
         tag: tag.map(|t| t.to_string()),
         subdir: subdir.map(|s| s.to_string()),
     };
-    let result = install_from_path(&install_path, debug, force, source);
-
-    // Cleanup temp directory (warn on failure)
-    if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-        output::warning(&format!("Failed to remove temp directory: {}", e));
-    }
-
-    result
+    install_from_path(&install_path, debug, force, source)
+    // temp_dir is automatically cleaned up when dropped
 }
 
 pub fn install_from_path(
@@ -427,7 +452,31 @@ pub fn install_from_path(
         .to_string_lossy()
         .to_string();
     let dest_path = plugin_dir.join(&bin_filename);
-    std::fs::copy(&bin_path, &dest_path)?;
+
+    // Backup existing binary for rollback (if reinstalling)
+    let backup_path = dest_path.with_extension("backup");
+    let has_backup = if dest_path.exists() && force {
+        std::fs::rename(&dest_path, &backup_path)?;
+        true
+    } else {
+        false
+    };
+
+    // Copy new binary (with rollback on failure)
+    if let Err(e) = std::fs::copy(&bin_path, &dest_path) {
+        if has_backup {
+            // Restore backup
+            if let Err(restore_err) = std::fs::rename(&backup_path, &dest_path) {
+                output::warning(&format!("Failed to restore backup: {}", restore_err));
+            }
+        }
+        return Err(format!("Failed to copy plugin binary: {}", e).into());
+    }
+
+    // Remove backup after successful copy
+    if has_backup {
+        let _ = std::fs::remove_file(&backup_path);
+    }
 
     // Make executable on Unix
     #[cfg(unix)]
@@ -444,9 +493,9 @@ pub fn install_from_path(
         std::fs::copy(&manifest_path, &dest_manifest)?;
     }
 
-    // Parse metadata from manifest if available
+    // Parse metadata from manifest if available (with size limit check)
     let (description, license, dependencies) = if manifest_path.exists() {
-        let manifest_content = std::fs::read_to_string(&manifest_path)?;
+        let manifest_content = read_manifest_checked(&manifest_path)?;
         let manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
         let desc = manifest["description"].as_str().map(String::from);
         let lic = manifest["license"].as_str().map(String::from);
@@ -490,8 +539,22 @@ pub fn install_from_path(
     Ok(())
 }
 
+/// Read manifest file with size limit check
+fn read_manifest_checked(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let metadata = std::fs::metadata(path)?;
+    if metadata.len() > MAX_MANIFEST_SIZE {
+        return Err(format!(
+            "manifest.json too large: {} bytes (max: {} bytes)",
+            metadata.len(),
+            MAX_MANIFEST_SIZE
+        )
+        .into());
+    }
+    Ok(std::fs::read_to_string(path)?)
+}
+
 fn parse_manifest(manifest_path: &Path, package_name: &str) -> Result<ManifestInfo, Box<dyn std::error::Error>> {
-    let manifest_content = std::fs::read_to_string(manifest_path)?;
+    let manifest_content = read_manifest_checked(manifest_path)?;
     let manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
 
     let name = manifest["name"].as_str().unwrap_or(package_name).to_string();

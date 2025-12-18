@@ -42,6 +42,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
+/// Maximum allowed request size (1MB)
+const MAX_REQUEST_SIZE: usize = 1024 * 1024;
+
+/// Default request timeout (5 minutes)
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Reserved method name prefixes that plugins cannot register
+const RESERVED_PREFIXES: &[&str] = &["$/", "rpc.", "system."];
+
 // ============================================================================
 // Param Deserialization Helper
 // ============================================================================
@@ -496,7 +505,7 @@ impl PluginServer {
             metadata: PluginMetadata::default(),
             shutdown_callback: None,
             state: None,
-            default_timeout: None,
+            default_timeout: Some(DEFAULT_REQUEST_TIMEOUT),
             pre_request_hook: None,
             post_request_hook: None,
             debug_options: DebugOptions::default(),
@@ -828,7 +837,26 @@ impl PluginServer {
     }
 
     /// Internal helper to register a handler with capability tracking
+    ///
+    /// # Panics
+    /// Panics if the method name:
+    /// - Is empty
+    /// - Contains control characters
+    /// - Uses a reserved prefix (`$/`, `rpc.`, `system.`)
     fn register_handler(mut self, name: &str, func: BoxedHandlerFn, timeout: Option<Duration>) -> Self {
+        // Validate handler name
+        assert!(!name.is_empty(), "Handler name cannot be empty");
+        assert!(
+            !name.chars().any(|c| c.is_control()),
+            "Handler name '{}' contains control characters",
+            name
+        );
+        assert!(
+            !RESERVED_PREFIXES.iter().any(|p| name.starts_with(p)),
+            "Handler name '{}' uses reserved prefix",
+            name
+        );
+
         // Auto-register capability for format/backend methods
         if (name.starts_with("format.") || name.starts_with("backend."))
             && !self.capabilities.contains(&name.to_string())
@@ -851,6 +879,22 @@ impl PluginServer {
         for line in reader.lines() {
             let line = line?;
             if line.is_empty() {
+                continue;
+            }
+
+            // Check request size limit
+            if line.len() > MAX_REQUEST_SIZE {
+                let resp = Response::error(
+                    RequestId::Number(0),
+                    RpcError::invalid_request(format!(
+                        "Request too large: {} bytes (max: {} bytes)",
+                        line.len(),
+                        MAX_REQUEST_SIZE
+                    )),
+                );
+                let json = serde_json::to_string(&resp)?;
+                writeln!(stdout, "{}", json)?;
+                stdout.flush()?;
                 continue;
             }
 

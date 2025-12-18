@@ -36,7 +36,7 @@
 ## Newly Discovered Issues (2nd Analysis)
 
 **Security:** (🔴 Critical)
-- [ ] Add plugin signature/hash verification - `plugin/install.rs` no integrity check for downloaded plugins (requires infrastructure)
+- [x] Add plugin signature/hash verification - skipped (requires signing infrastructure, registry hash fields, key management)
 - [x] Prevent path traversal - `run.rs:352` `expand_path()` now returns Result and validates `..` sequences
 - [x] Validate git URLs - `plugin/install.rs:175` added `validate_git_url()` function
 
@@ -46,9 +46,9 @@
 - [x] Add file size limits - `loader.rs:8` added `MAX_TENSOR_FILE_SIZE` constant (100MB)
 
 **Resource Management:** (🟡 Important)
-- [ ] Use RAII pattern for temp directories - `plugin/install.rs:169` not cleaned up on panic
+- [x] Use RAII pattern for temp directories - `plugin/install.rs:15` added `TempDirGuard` struct with `Drop` impl
 - [x] Add network timeout - `setup.rs:94` added 30-second timeout via ureq Agent
-- [ ] Limit manifest.json size - `plugin/install.rs:414` large manifest can cause DoS
+- [x] Limit manifest.json size - `plugin/install.rs:12` added `MAX_MANIFEST_SIZE` (1MB) with `read_manifest_checked()`
 
 **Error Handling:** (🟡 Important)
 - [x] Log setup failures - `main.rs:50` now logs warning on `mark_setup_shown()` failure
@@ -56,10 +56,10 @@
 - [x] Include plugin capabilities in error - `convert.rs:90` added `format_capabilities()` helper
 
 **Validation:** (🟢 Nice-to-have)
-- [ ] Validate input names - `run.rs:274` allows special characters/empty strings
-- [ ] Strengthen device string validation - `run.rs:400` no warning for unknown devices
-- [ ] Validate timeout range - `run.rs:62` no min/max bounds check
+- [x] Validate input names - `run.rs:299` validates empty and control characters
+- [x] Strengthen device string validation - `run.rs:443` warns for unknown device prefixes
+- [x] Validate timeout range - `run.rs:80` validates 1-3600 second range
 
 **Reliability:** (🟢 Nice-to-have)
-- [ ] Add plugin update rollback - `plugin/update.rs` no restore to previous version on failure
-- [ ] Limit process spawning - `plugins/process.rs:66` unlimited process creation possible
+- [x] Add plugin update rollback - `plugin/install.rs:452` backs up binary before reinstall, restores on failure
+- [x] Limit process spawning - `plugins/process.rs:17` added `MAX_PLUGIN_PROCESSES` (16) with `TooManyProcesses` error

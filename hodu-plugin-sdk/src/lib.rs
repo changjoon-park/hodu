@@ -20,7 +20,7 @@
 //!     todo!()
 //! }
 //!
-//! #[tokio::main]
+//! #[hodu_plugin_sdk::main]
 //! async fn main() {
 //!     PluginServer::new("my-backend", env!("CARGO_PKG_VERSION"))
 //!         .devices(vec!["cpu"])
@@ -102,3 +102,6 @@ pub use hodu_core::{
 
 // Re-export procedural macros
 pub use hodu_plugin_sdk_macros::{define_params, define_result, plugin_handler, PluginMethod};
+
+// Re-export tokio::main for plugin entry points
+pub use tokio::main;

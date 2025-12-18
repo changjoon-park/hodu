@@ -148,8 +148,8 @@ type BoxedTestHandler = Box<
 pub struct TestHarness {
     handlers: HashMap<String, BoxedTestHandler>,
     request_counter: std::sync::atomic::AtomicI64,
-    /// Captured logs during test execution
-    pub logs: Arc<std::sync::Mutex<Vec<LogEntry>>>,
+    /// Captured logs during test execution (uses RwLock for concurrent reads)
+    pub logs: Arc<std::sync::RwLock<Vec<LogEntry>>>,
 }
 
 /// A captured log entry
@@ -165,7 +165,7 @@ impl TestHarness {
         Self {
             handlers: HashMap::new(),
             request_counter: std::sync::atomic::AtomicI64::new(1),
-            logs: Arc::new(std::sync::Mutex::new(Vec::new())),
+            logs: Arc::new(std::sync::RwLock::new(Vec::new())),
         }
     }
 
@@ -231,7 +231,7 @@ impl TestHarness {
     /// Returns logs even if the lock was poisoned (e.g., due to a panic in another test).
     pub fn get_logs(&self) -> Vec<LogEntry> {
         self.logs
-            .lock()
+            .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
@@ -241,14 +241,14 @@ impl TestHarness {
     /// Clears logs even if the lock was poisoned.
     pub fn clear_logs(&self) {
         self.logs
-            .lock()
+            .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear();
     }
 
     /// Assert that a specific log message was captured
     pub fn assert_logged(&self, level: &str, message_contains: &str) {
-        let logs = self.logs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let logs = self.logs.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         let found = logs
             .iter()
             .any(|log| log.level == level && log.message.contains(message_contains));
