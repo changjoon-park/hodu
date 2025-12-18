@@ -76,7 +76,7 @@ fn clean_directory(path: &Path, name: &str, dry_run: bool) -> Result<(), Box<dyn
     Ok(())
 }
 
-fn dir_size(path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+fn dir_size(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
     let mut size = 0;
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
@@ -85,11 +85,11 @@ fn dir_size(path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
             if path.is_dir() {
                 size += dir_size(&path)?;
             } else {
-                size += entry.metadata()?.len();
+                size += entry.metadata()?.len() as usize;
             }
         }
     } else {
-        size = std::fs::metadata(path)?.len();
+        size = std::fs::metadata(path)?.len() as usize;
     }
     Ok(size)
 }

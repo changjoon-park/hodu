@@ -4,10 +4,9 @@
 
 use crate::output;
 use crate::plugins::{PluginManager, PluginRegistry};
-use crate::tensor::{load_tensor_file, save_outputs};
+use crate::tensor::{load_tensor_data, load_tensor_file, save_outputs, save_tensor_data};
 use crate::utils::{core_dtype_to_plugin, path_to_str, plugin_dtype_to_core};
 use clap::Args;
-use hodu_core::format::hdt;
 use hodu_core::snapshot::Snapshot;
 use hodu_core::tensor::Tensor;
 use hodu_core::types::{Device as CoreDevice, Shape};
@@ -459,27 +458,4 @@ fn friendly_backend_error(device: &Device, registry: &PluginRegistry) -> String 
     }
 
     msg
-}
-
-fn load_tensor_data(path: &str) -> Result<TensorData, Box<dyn std::error::Error>> {
-    let tensor = hdt::load(path).map_err(|e| format!("Failed to load HDT: {}", e))?;
-    let shape: Vec<usize> = tensor.shape().dims().to_vec();
-    let dtype = core_dtype_to_plugin(tensor.dtype());
-    let data = tensor
-        .to_bytes()
-        .map_err(|e| format!("Failed to get tensor bytes: {}", e))?;
-    Ok(TensorData::new(data, shape, dtype))
-}
-
-fn save_tensor_data(
-    tensor_data: &TensorData,
-    path: impl AsRef<std::path::Path>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use hodu_core::format::hdt;
-
-    let shape = Shape::new(&tensor_data.shape);
-    let dtype = plugin_dtype_to_core(tensor_data.dtype);
-    let tensor = Tensor::from_bytes(&tensor_data.data, shape, dtype, CoreDevice::CPU).map_err(|e| e.to_string())?;
-    hdt::save(&tensor, path).map_err(|e| e.to_string())?;
-    Ok(())
 }

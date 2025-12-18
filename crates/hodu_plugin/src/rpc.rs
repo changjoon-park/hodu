@@ -403,7 +403,8 @@ impl RpcError {
         Self::new(error_codes::INVALID_REQUEST, msg)
     }
 
-    pub fn method_not_found(method: &str) -> Self {
+    pub fn method_not_found(method: impl Into<String>) -> Self {
+        let method = method.into();
         Self::new(error_codes::METHOD_NOT_FOUND, format!("Method not found: {}", method))
     }
 
@@ -415,11 +416,13 @@ impl RpcError {
         Self::new(error_codes::INTERNAL_ERROR, msg)
     }
 
-    pub fn not_supported(feature: &str) -> Self {
+    pub fn not_supported(feature: impl Into<String>) -> Self {
+        let feature = feature.into();
         Self::new(error_codes::NOT_SUPPORTED, format!("Not supported: {}", feature))
     }
 
-    pub fn file_not_found(path: &str) -> Self {
+    pub fn file_not_found(path: impl Into<String>) -> Self {
+        let path = path.into();
         Self::new(error_codes::FILE_NOT_FOUND, format!("File not found: {}", path))
     }
 

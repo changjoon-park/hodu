@@ -2,9 +2,10 @@
 
 use crate::output;
 use crate::plugins::{PluginManager, PluginRegistry};
+use crate::tensor::{load_tensor_data, save_tensor_data};
 use crate::utils::{core_dtype_to_plugin, path_to_str, plugin_dtype_to_core};
 use clap::Args;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct ConvertArgs {
@@ -136,7 +137,7 @@ fn convert_tensor(
 
     // Step 1: Load input tensor
     let tensor_data = match input_ext {
-        "hdt" => load_tensor_data_from_path(&args.input)?,
+        "hdt" => load_tensor_data(&args.input)?,
         "json" => {
             let tensor = json::load(&args.input).map_err(|e| e.to_string())?;
             let shape = tensor.shape().dims().to_vec();
@@ -156,7 +157,7 @@ fn convert_tensor(
 
             let client = manager.get_plugin(&plugin.name)?;
             let result = client.load_tensor(path_to_str(&args.input)?)?;
-            load_tensor_data_from_path(&result.tensor_path)?
+            load_tensor_data(&result.tensor_path)?
         },
     };
 
@@ -198,33 +199,5 @@ fn convert_tensor(
         args.input.file_name().unwrap_or_default().to_string_lossy(),
         args.output.file_name().unwrap_or_default().to_string_lossy()
     ));
-    Ok(())
-}
-
-fn load_tensor_data_from_path(path: impl AsRef<Path>) -> Result<hodu_plugin::TensorData, Box<dyn std::error::Error>> {
-    use hodu_core::format::hdt;
-    use hodu_plugin::TensorData;
-
-    let tensor = hdt::load(path).map_err(|e| format!("Failed to load HDT: {}", e))?;
-    let shape: Vec<usize> = tensor.shape().dims().to_vec();
-    let dtype = core_dtype_to_plugin(tensor.dtype());
-    let data = tensor
-        .to_bytes()
-        .map_err(|e| format!("Failed to get tensor bytes: {}", e))?;
-    Ok(TensorData::new(data, shape, dtype))
-}
-
-fn save_tensor_data(
-    tensor_data: &hodu_plugin::TensorData,
-    path: impl AsRef<Path>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use hodu_core::format::hdt;
-    use hodu_core::tensor::Tensor;
-    use hodu_core::types::{Device as CoreDevice, Shape};
-
-    let shape = Shape::new(&tensor_data.shape);
-    let dtype = plugin_dtype_to_core(tensor_data.dtype);
-    let tensor = Tensor::from_bytes(&tensor_data.data, shape, dtype, CoreDevice::CPU).map_err(|e| e.to_string())?;
-    hdt::save(&tensor, path).map_err(|e| e.to_string())?;
     Ok(())
 }

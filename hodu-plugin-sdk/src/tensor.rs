@@ -49,7 +49,10 @@ pub fn plugin_dtype_to_core(dtype: PluginDType) -> hodu_core::types::DType {
         PluginDType::I16 => DType::I16,
         PluginDType::I32 => DType::I32,
         PluginDType::I64 => DType::I64,
-        _ => DType::F32, // fallback for future dtypes
+        _ => panic!(
+            "Unknown PluginDType variant: {:?}. Update plugin_dtype_to_core() to handle new dtypes.",
+            dtype
+        ),
     }
 }
 

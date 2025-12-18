@@ -127,13 +127,17 @@ impl Context {
     /// Send a progress notification
     ///
     /// # Arguments
-    /// * `percent` - Progress percentage (0-100), None for indeterminate
+    /// * `percent` - Progress percentage (0-100), None for indeterminate. Values > 100 are clamped to 100.
     /// * `message` - Progress message
     pub fn progress(&self, percent: Option<u8>, message: &str) {
         crate::notify_progress(percent, message);
     }
 
     /// Send a log message
+    ///
+    /// # Arguments
+    /// * `level` - Log level: "error", "warn", "info", "debug", "trace". Invalid levels default to "info".
+    /// * `message` - Log message
     pub fn log(&self, level: &str, message: &str) {
         crate::notify_log(level, message);
     }

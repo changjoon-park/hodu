@@ -123,25 +123,40 @@ type PostRequestHook = Box<dyn Fn(&ResponseInfo) + Send + Sync>;
 /// Send a progress notification to the CLI
 ///
 /// # Arguments
-/// * `percent` - Progress percentage (0-100), None for indeterminate
+/// * `percent` - Progress percentage (0-100), None for indeterminate. Values > 100 are clamped to 100.
 /// * `message` - Progress message
 pub fn notify_progress(percent: Option<u8>, message: &str) {
+    // Clamp percent to 0-100
+    let percent = percent.map(|p| p.min(100));
     let notification = Notification::progress(percent, message);
     if let Ok(json) = serde_json::to_string(&notification) {
-        let _ = writeln!(std::io::stdout(), "{}", json);
+        if writeln!(std::io::stdout(), "{}", json).is_err() {
+            eprintln!("Warning: Failed to send progress notification");
+        }
         let _ = std::io::stdout().flush();
     }
 }
 
+/// Valid log levels
+const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
+
 /// Send a log notification to the CLI
 ///
 /// # Arguments
-/// * `level` - Log level: "error", "warn", "info", "debug", "trace"
+/// * `level` - Log level: "error", "warn", "info", "debug", "trace". Invalid levels default to "info".
 /// * `message` - Log message
 pub fn notify_log(level: &str, message: &str) {
+    // Validate log level, default to "info" if invalid
+    let level = if VALID_LOG_LEVELS.contains(&level) {
+        level
+    } else {
+        "info"
+    };
     let notification = Notification::log(level, message);
     if let Ok(json) = serde_json::to_string(&notification) {
-        let _ = writeln!(std::io::stdout(), "{}", json);
+        if writeln!(std::io::stdout(), "{}", json).is_err() {
+            eprintln!("Warning: Failed to send log notification");
+        }
         let _ = std::io::stdout().flush();
     }
 }

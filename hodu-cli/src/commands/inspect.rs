@@ -4,13 +4,13 @@
 
 use crate::output::{self, colors};
 use crate::plugins::{PluginManager, PluginRegistry};
-use crate::utils::{core_dtype_to_plugin, path_to_str};
+use crate::tensor::load_tensor_data;
+use crate::utils::path_to_str;
 use clap::Args;
 use hodu_core::format::hdt;
 use hodu_core::ops::Op;
 use hodu_core::snapshot::Snapshot;
 use hodu_core::tensor::Tensor;
-use hodu_plugin::TensorData;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -93,7 +93,7 @@ fn inspect_hdss(args: &InspectArgs) -> Result<(), Box<dyn std::error::Error>> {
         print_section_header("Constants", snapshot.constants.len(), use_color);
         for constant in &snapshot.constants {
             let name = constant.name.as_deref().unwrap_or("(unnamed)");
-            let size_str = format_bytes(constant.data.len());
+            let size_str = output::format_size(constant.data.len());
             if use_color {
                 println!(
                     "  {}•{} {:<16} {:?} {}{:?}{} {}{}{}",
@@ -221,14 +221,19 @@ fn print_tensor_info(tensor: &Tensor, path: &Path, as_json: bool) -> Result<(), 
             println!("  {}Shape{} {:?}", colors::CYAN, colors::RESET, shape);
             println!("  {}DType{} {:?}", colors::CYAN, colors::RESET, dtype);
             println!("  {}Elements{} {}", colors::CYAN, colors::RESET, format_number(numel));
-            println!("  {}Size{} {}", colors::CYAN, colors::RESET, format_bytes(size_bytes));
+            println!(
+                "  {}Size{} {}",
+                colors::CYAN,
+                colors::RESET,
+                output::format_size(size_bytes)
+            );
         } else {
             println!("{}", filename);
             println!();
             println!("  Shape    {:?}", shape);
             println!("  DType    {:?}", dtype);
             println!("  Elements {}", format_number(numel));
-            println!("  Size     {}", format_bytes(size_bytes));
+            println!("  Size     {}", output::format_size(size_bytes));
         }
     }
 
@@ -351,14 +356,14 @@ fn inspect_with_plugin(args: &InspectArgs, ext: &str) -> Result<(), Box<dyn std:
                     "  {}Size{} {}",
                     colors::CYAN,
                     colors::RESET,
-                    format_bytes(tensor_data.data.len())
+                    output::format_size(tensor_data.data.len())
                 );
             } else {
                 println!("{}", filename);
                 println!();
                 println!("  Shape {:?}", tensor_data.shape);
                 println!("  DType {}", tensor_data.dtype.name());
-                println!("  Size  {}", format_bytes(tensor_data.data.len()));
+                println!("  Size  {}", output::format_size(tensor_data.data.len()));
             }
         }
         return Ok(());
@@ -467,22 +472,6 @@ fn get_op_category(op: &Op) -> &'static str {
     }
 }
 
-fn format_bytes(bytes: usize) -> String {
-    const KB: usize = 1024;
-    const MB: usize = KB * 1024;
-    const GB: usize = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
-}
-
 fn format_number(n: usize) -> String {
     if n >= 1_000_000_000 {
         format!("{:.2}B", n as f64 / 1_000_000_000.0)
@@ -497,16 +486,6 @@ fn format_number(n: usize) -> String {
 
 fn format_file_size(path: &Path) -> String {
     std::fs::metadata(path)
-        .map(|m| format_bytes(m.len() as usize))
+        .map(|m| output::format_size(m.len() as usize))
         .unwrap_or_default()
-}
-
-fn load_tensor_data(path: &str) -> Result<TensorData, Box<dyn std::error::Error>> {
-    let tensor = hdt::load(path).map_err(|e| format!("Failed to load HDT: {}", e))?;
-    let shape: Vec<usize> = tensor.shape().dims().to_vec();
-    let dtype = core_dtype_to_plugin(tensor.dtype());
-    let data = tensor
-        .to_bytes()
-        .map_err(|e| format!("Failed to get tensor bytes: {}", e))?;
-    Ok(TensorData::new(data, shape, dtype))
 }
