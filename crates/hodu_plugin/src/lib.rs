@@ -12,7 +12,7 @@ pub mod tensor;
 pub use backend::{current_host_triple, device_type, parse_device_id, BuildTarget, Device};
 pub use error::{PluginError, PluginResult};
 pub use rpc::*;
-pub use tensor::{PluginDType, TensorData, TensorDataError};
+pub use tensor::{ParseDTypeError, PluginDType, TensorData, TensorDataError};
 
 /// Plugin protocol version for compatibility checking (semver string)
 pub const PLUGIN_VERSION: &str = env!("CARGO_PKG_VERSION");

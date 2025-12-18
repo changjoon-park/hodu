@@ -6,7 +6,10 @@ mod install;
 mod update;
 
 use crate::output;
-use crate::plugins::{PluginManager, PluginRegistry, PluginSource};
+use crate::plugins::{
+    backend_plugin_name, format_plugin_name, load_registry, load_registry_mut, PluginManager, PluginRegistry,
+    PluginSource,
+};
 use clap::{Args, Subcommand};
 use std::path::PathBuf;
 
@@ -122,8 +125,7 @@ pub fn execute(args: PluginArgs) -> Result<(), Box<dyn std::error::Error>> {
 fn list_plugins() -> Result<(), Box<dyn std::error::Error>> {
     let use_color = output::supports_color();
 
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
 
     // Backend plugins
     print_section("Backend Plugins", use_color);
@@ -301,13 +303,12 @@ fn info_plugin(args: InfoArgs) -> Result<(), Box<dyn std::error::Error>> {
     use output::colors;
     let use_color = output::supports_color();
 
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
 
     // Find plugin
     let plugin = registry.find(&args.name).or_else(|| {
-        let backend_name = format!("hodu-backend-{}", args.name);
-        let format_name = format!("hodu-format-{}", args.name);
+        let backend_name = backend_plugin_name(&args.name);
+        let format_name = format_plugin_name(&args.name);
         registry.find(&backend_name).or_else(|| registry.find(&format_name))
     });
 
@@ -493,15 +494,14 @@ fn do_install(args: InstallArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn remove_plugin(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let registry_path = PluginRegistry::default_path()?;
-    let mut registry = PluginRegistry::load(&registry_path)?;
+    let (mut registry, registry_path) = load_registry_mut()?;
 
     // Find the plugin (try various name formats)
     let plugin = if let Some(p) = registry.find(&args.name) {
         p
     } else {
-        let backend_name = format!("hodu-backend-{}", args.name);
-        let format_name = format!("hodu-format-{}", args.name);
+        let backend_name = backend_plugin_name(&args.name);
+        let format_name = format_plugin_name(&args.name);
 
         if registry.find(&backend_name).is_some() {
             return remove_plugin(RemoveArgs { name: backend_name });
@@ -539,8 +539,7 @@ fn remove_plugin(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn enable_plugin(args: EnableArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let registry_path = PluginRegistry::default_path()?;
-    let mut registry = PluginRegistry::load(&registry_path)?;
+    let (mut registry, registry_path) = load_registry_mut()?;
 
     // Try to find plugin with various name formats
     let name = find_plugin_name(&registry, &args.name)?;
@@ -556,8 +555,7 @@ fn enable_plugin(args: EnableArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn disable_plugin(args: DisableArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let registry_path = PluginRegistry::default_path()?;
-    let mut registry = PluginRegistry::load(&registry_path)?;
+    let (mut registry, registry_path) = load_registry_mut()?;
 
     // Try to find plugin with various name formats
     let name = find_plugin_name(&registry, &args.name)?;
@@ -585,8 +583,7 @@ fn disable_plugin(args: DisableArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn verify_plugins() -> Result<(), Box<dyn std::error::Error>> {
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
     let plugins_dir = get_plugins_dir()?;
 
     let mut issues = Vec::new();
@@ -646,12 +643,12 @@ fn find_plugin_name(registry: &PluginRegistry, name: &str) -> Result<String, Box
         return Ok(name.to_string());
     }
 
-    let backend_name = format!("hodu-backend-{}", name);
+    let backend_name = backend_plugin_name(name);
     if registry.find(&backend_name).is_some() {
         return Ok(backend_name);
     }
 
-    let format_name = format!("hodu-format-{}", name);
+    let format_name = format_plugin_name(name);
     if registry.find(&format_name).is_some() {
         return Ok(format_name);
     }

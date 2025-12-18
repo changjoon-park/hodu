@@ -43,6 +43,27 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 // ============================================================================
+// Param Deserialization Helper
+// ============================================================================
+
+/// Deserialize params from JSON-RPC request with proper error handling
+///
+/// Returns `RpcError::invalid_params` if params are missing or malformed.
+fn deserialize_params<P: DeserializeOwned>(params: Option<serde_json::Value>) -> Result<P, RpcError> {
+    match params {
+        Some(v) => serde_json::from_value(v).map_err(|e| RpcError::invalid_params(e.to_string())),
+        None => Err(RpcError::invalid_params("Missing params")),
+    }
+}
+
+/// Try to deserialize params, returning None if params are missing or invalid
+///
+/// Useful for optional/notification handlers where errors should be silently ignored.
+fn try_deserialize_params<P: DeserializeOwned>(params: Option<serde_json::Value>) -> Option<P> {
+    params.and_then(|v| serde_json::from_value(v).ok())
+}
+
+// ============================================================================
 // Plugin Metadata
 // ============================================================================
 
@@ -117,6 +138,41 @@ type PreRequestHook = Box<dyn Fn(&RequestInfo) -> PreRequestAction + Send + Sync
 type PostRequestHook = Box<dyn Fn(&ResponseInfo) + Send + Sync>;
 
 // ============================================================================
+// Debug/Profiling Options
+// ============================================================================
+
+/// Debug logging options for development
+#[derive(Clone, Default)]
+pub struct DebugOptions {
+    /// Log all incoming requests to stderr
+    pub log_requests: bool,
+    /// Log all outgoing responses to stderr
+    pub log_responses: bool,
+    /// Log handler execution times to stderr
+    pub log_profiling: bool,
+}
+
+impl DebugOptions {
+    /// Enable all debug logging
+    pub fn all() -> Self {
+        Self {
+            log_requests: true,
+            log_responses: true,
+            log_profiling: true,
+        }
+    }
+
+    /// Enable only profiling (execution time logging)
+    pub fn profiling_only() -> Self {
+        Self {
+            log_requests: false,
+            log_responses: false,
+            log_profiling: true,
+        }
+    }
+}
+
+// ============================================================================
 // Notification helpers (can be called from handlers)
 // ============================================================================
 
@@ -173,6 +229,158 @@ pub fn log_info(message: &str) {
 }
 pub fn log_debug(message: &str) {
     notify_log("debug", message);
+}
+
+// ============================================================================
+// Streaming Response Support
+// ============================================================================
+
+/// A streaming response writer for sending chunked data
+///
+/// Allows sending data in chunks during long-running operations,
+/// using JSON-RPC notifications as the transport mechanism.
+///
+/// # Example
+///
+/// ```ignore
+/// async fn handle_export(ctx: Context, params: ExportParams) -> Result<ExportResult, RpcError> {
+///     let mut stream = StreamWriter::new("export.chunk");
+///
+///     for chunk in data.chunks(1024) {
+///         stream.write_chunk(chunk)?;
+///     }
+///
+///     stream.finish()?;
+///     Ok(ExportResult { /* ... */ })
+/// }
+/// ```
+pub struct StreamWriter {
+    method: String,
+    chunk_index: usize,
+}
+
+impl StreamWriter {
+    /// Create a new stream writer
+    ///
+    /// # Arguments
+    /// * `method` - Notification method name for chunks (e.g., "export.chunk")
+    pub fn new(method: impl Into<String>) -> Self {
+        Self {
+            method: method.into(),
+            chunk_index: 0,
+        }
+    }
+
+    /// Write a chunk of bytes
+    pub fn write_chunk(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
+        self.write_chunk_with_metadata(data, None)
+    }
+
+    /// Write a chunk with optional metadata
+    pub fn write_chunk_with_metadata(
+        &mut self,
+        data: &[u8],
+        metadata: Option<serde_json::Value>,
+    ) -> Result<(), std::io::Error> {
+        use std::io::Write;
+
+        let encoded = base64_encode(data);
+        let mut params = serde_json::json!({
+            "index": self.chunk_index,
+            "data": encoded,
+            "size": data.len(),
+        });
+
+        if let Some(meta) = metadata {
+            if let Some(obj) = params.as_object_mut() {
+                obj.insert("metadata".to_string(), meta);
+            }
+        }
+
+        let notification = Notification::new(&self.method, Some(params));
+        let json = serde_json::to_string(&notification)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        writeln!(std::io::stdout(), "{}", json)?;
+        std::io::stdout().flush()?;
+
+        self.chunk_index += 1;
+        Ok(())
+    }
+
+    /// Write a JSON chunk (for structured data streaming)
+    pub fn write_json(&mut self, value: &serde_json::Value) -> Result<(), std::io::Error> {
+        use std::io::Write;
+
+        let params = serde_json::json!({
+            "index": self.chunk_index,
+            "json": value,
+        });
+
+        let notification = Notification::new(&self.method, Some(params));
+        let json = serde_json::to_string(&notification)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        writeln!(std::io::stdout(), "{}", json)?;
+        std::io::stdout().flush()?;
+
+        self.chunk_index += 1;
+        Ok(())
+    }
+
+    /// Signal that streaming is complete
+    pub fn finish(&self) -> Result<(), std::io::Error> {
+        use std::io::Write;
+
+        let params = serde_json::json!({
+            "finished": true,
+            "total_chunks": self.chunk_index,
+        });
+
+        let notification = Notification::new(&self.method, Some(params));
+        let json = serde_json::to_string(&notification)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        writeln!(std::io::stdout(), "{}", json)?;
+        std::io::stdout().flush()?;
+
+        Ok(())
+    }
+
+    /// Get the number of chunks written so far
+    pub fn chunks_written(&self) -> usize {
+        self.chunk_index
+    }
+}
+
+/// Simple base64 encoding for chunk data
+fn base64_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut result = Vec::with_capacity(data.len().div_ceil(3) * 4);
+
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
+
+        result.push(ALPHABET[b0 >> 2]);
+        result.push(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)]);
+
+        if chunk.len() > 1 {
+            result.push(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)]);
+        } else {
+            result.push(b'=');
+        }
+
+        if chunk.len() > 2 {
+            result.push(ALPHABET[b2 & 0x3f]);
+        } else {
+            result.push(b'=');
+        }
+    }
+
+    String::from_utf8(result).unwrap_or_default()
 }
 
 // ============================================================================
@@ -252,6 +460,8 @@ pub struct PluginServer {
     pre_request_hook: Option<PreRequestHook>,
     /// Post-request hook
     post_request_hook: Option<PostRequestHook>,
+    /// Debug/profiling options
+    debug_options: DebugOptions,
 }
 
 impl PluginServer {
@@ -273,7 +483,41 @@ impl PluginServer {
             default_timeout: None,
             pre_request_hook: None,
             post_request_hook: None,
+            debug_options: DebugOptions::default(),
         }
+    }
+
+    /// Enable debug logging for development
+    ///
+    /// Logs requests, responses, and/or profiling info to stderr.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Enable all debug logging
+    /// PluginServer::new("my-plugin", "1.0.0")
+    ///     .debug(DebugOptions::all())
+    ///     .run()
+    ///     .await
+    ///
+    /// // Enable only profiling
+    /// PluginServer::new("my-plugin", "1.0.0")
+    ///     .debug(DebugOptions::profiling_only())
+    ///     .run()
+    ///     .await
+    /// ```
+    pub fn debug(mut self, options: DebugOptions) -> Self {
+        self.debug_options = options;
+        self
+    }
+
+    /// Enable automatic profiling (execution time measurement)
+    ///
+    /// Logs handler execution times to stderr.
+    /// Shortcut for `.debug(DebugOptions::profiling_only())`.
+    pub fn enable_profiling(mut self) -> Self {
+        self.debug_options.log_profiling = true;
+        self
     }
 
     /// Set default timeout for all handlers
@@ -500,36 +744,23 @@ impl PluginServer {
     ///
     /// server.method("backend.run", handle_run)
     /// ```
-    pub fn method<F, Fut, P, R>(mut self, name: &str, handler: F) -> Self
+    pub fn method<F, Fut, P, R>(self, name: &str, handler: F) -> Self
     where
         F: Fn(Context, P) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R, RpcError>> + Send + 'static,
         P: DeserializeOwned + Send + 'static,
         R: Serialize + 'static,
     {
-        self.register_capability(name);
-
         let handler = Arc::new(handler);
         let boxed: BoxedHandlerFn = Box::new(move |ctx, params| {
             let handler = handler.clone();
             Box::pin(async move {
-                let params: P = match params {
-                    Some(v) => serde_json::from_value(v).map_err(|e| RpcError::invalid_params(e.to_string()))?,
-                    None => return Err(RpcError::invalid_params("Missing params")),
-                };
+                let params: P = deserialize_params(params)?;
                 let result = handler(ctx, params).await?;
                 serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))
             })
         });
-
-        self.handlers.insert(
-            name.to_string(),
-            Handler {
-                func: boxed,
-                timeout: None,
-            },
-        );
-        self
+        self.register_handler(name, boxed, None)
     }
 
     /// Register an async method handler with custom timeout
@@ -543,47 +774,32 @@ impl PluginServer {
     ///     .timeout(Duration::from_secs(30))  // default
     ///     .method_with_timeout("backend.run", handler, Duration::from_secs(120))  // override
     /// ```
-    pub fn method_with_timeout<F, Fut, P, R>(mut self, name: &str, handler: F, timeout: Duration) -> Self
+    pub fn method_with_timeout<F, Fut, P, R>(self, name: &str, handler: F, timeout: Duration) -> Self
     where
         F: Fn(Context, P) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R, RpcError>> + Send + 'static,
         P: DeserializeOwned + Send + 'static,
         R: Serialize + 'static,
     {
-        self.register_capability(name);
-
         let handler = Arc::new(handler);
         let boxed: BoxedHandlerFn = Box::new(move |ctx, params| {
             let handler = handler.clone();
             Box::pin(async move {
-                let params: P = match params {
-                    Some(v) => serde_json::from_value(v).map_err(|e| RpcError::invalid_params(e.to_string()))?,
-                    None => return Err(RpcError::invalid_params("Missing params")),
-                };
+                let params: P = deserialize_params(params)?;
                 let result = handler(ctx, params).await?;
                 serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))
             })
         });
-
-        self.handlers.insert(
-            name.to_string(),
-            Handler {
-                func: boxed,
-                timeout: Some(timeout),
-            },
-        );
-        self
+        self.register_handler(name, boxed, Some(timeout))
     }
 
     /// Register an async method handler without params
-    pub fn method_no_params<F, Fut, R>(mut self, name: &str, handler: F) -> Self
+    pub fn method_no_params<F, Fut, R>(self, name: &str, handler: F) -> Self
     where
         F: Fn(Context) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R, RpcError>> + Send + 'static,
         R: Serialize + 'static,
     {
-        self.register_capability(name);
-
         let handler = Arc::new(handler);
         let boxed: BoxedHandlerFn = Box::new(move |ctx, _params| {
             let handler = handler.clone();
@@ -592,23 +808,19 @@ impl PluginServer {
                 serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))
             })
         });
-
-        self.handlers.insert(
-            name.to_string(),
-            Handler {
-                func: boxed,
-                timeout: None,
-            },
-        );
-        self
+        self.register_handler(name, boxed, None)
     }
 
-    fn register_capability(&mut self, name: &str) {
+    /// Internal helper to register a handler with capability tracking
+    fn register_handler(mut self, name: &str, func: BoxedHandlerFn, timeout: Option<Duration>) -> Self {
+        // Auto-register capability for format/backend methods
         if (name.starts_with("format.") || name.starts_with("backend."))
             && !self.capabilities.contains(&name.to_string())
         {
             self.capabilities.push(name.to_string());
         }
+        self.handlers.insert(name.to_string(), Handler { func, timeout });
+        self
     }
 
     /// Run the server
@@ -681,6 +893,11 @@ impl PluginServer {
     }
 
     async fn handle_message(&mut self, line: &str) -> Option<Response> {
+        // Debug: log raw request
+        if self.debug_options.log_requests {
+            eprintln!("[DEBUG] Request: {}", line);
+        }
+
         // Parse request
         let request: Request = match serde_json::from_str(line) {
             Ok(req) => req,
@@ -692,43 +909,44 @@ impl PluginServer {
             },
         };
 
-        let id = request.id.clone();
-        let method = request.method.clone();
+        let Request { id, method, params, .. } = request;
         let start_time = std::time::Instant::now();
 
-        // Create request info for hooks
-        let request_info = RequestInfo {
-            method: method.clone(),
-            id: id.clone(),
-            params: request.params.clone(),
-        };
+        // Debug: log parsed request info
+        if self.debug_options.log_requests {
+            eprintln!("[DEBUG] → {} (id: {:?})", method, id);
+        }
 
-        // Call pre-request hook (skip for internal methods)
-        if !method.starts_with("$/") && method != methods::INITIALIZE && method != methods::SHUTDOWN {
+        // Check if hooks should be called (skip for internal methods)
+        let call_hooks = !method.starts_with("$/") && method != methods::INITIALIZE && method != methods::SHUTDOWN;
+
+        // Call pre-request hook
+        if call_hooks {
             if let Some(ref hook) = self.pre_request_hook {
-                match hook(&request_info) {
-                    PreRequestAction::Continue => {},
-                    PreRequestAction::Reject(error) => {
-                        let duration = start_time.elapsed();
-                        // Call post-request hook
-                        if let Some(ref post_hook) = self.post_request_hook {
-                            post_hook(&ResponseInfo {
-                                method: method.clone(),
-                                id: id.clone(),
-                                success: false,
-                                error_code: Some(error.code),
-                                duration,
-                            });
-                        }
-                        return Some(Response::error(id, error));
-                    },
+                let request_info = RequestInfo {
+                    method: method.clone(),
+                    id: id.clone(),
+                    params: params.clone(),
+                };
+                if let PreRequestAction::Reject(error) = hook(&request_info) {
+                    // Call post-request hook on rejection
+                    if let Some(ref post_hook) = self.post_request_hook {
+                        post_hook(&ResponseInfo {
+                            method,
+                            id: id.clone(),
+                            success: false,
+                            error_code: Some(error.code),
+                            duration: start_time.elapsed(),
+                        });
+                    }
+                    return Some(Response::error(id, error));
                 }
             }
         }
 
         // Handle based on method
-        let result = match request.method.as_str() {
-            methods::INITIALIZE => self.handle_initialize(request.params),
+        let result = match method.as_str() {
+            methods::INITIALIZE => self.handle_initialize(params),
             methods::SHUTDOWN => {
                 // Call cleanup callback if set
                 if let Some(callback) = self.shutdown_callback.take() {
@@ -737,68 +955,70 @@ impl PluginServer {
                 std::process::exit(0);
             },
             methods::CANCEL => {
-                self.handle_cancel(request.params).await;
+                self.handle_cancel(params).await;
                 return None; // Cancel is a notification, no response
             },
             "$/ping" => {
                 // Health check endpoint
                 Ok(serde_json::json!({ "status": "ok" }))
             },
-            method => {
+            _ => {
                 if !self.initialized {
                     Err(RpcError::new(error_codes::INVALID_REQUEST, "Server not initialized"))
-                } else if let Some(handler) = self.handlers.get(method) {
+                } else if let Some(handler) = self.handlers.get(&method) {
                     // Create context with cancellation token and shared state
-                    let ctx = if let Some(state) = &self.state {
-                        Context::with_state_dyn(id.clone(), state.clone())
-                    } else {
-                        Context::new(id.clone())
+                    let ctx = match &self.state {
+                        Some(state) => Context::with_state_dyn(id.clone(), state.clone()),
+                        None => Context::new(id.clone()),
                     };
                     let cancel_handle = CancellationHandle::new(&ctx);
 
                     // Register active request
-                    {
-                        let mut active = self.active_requests.lock().await;
-                        active.insert(id.clone(), cancel_handle.clone());
-                    }
+                    self.active_requests
+                        .lock()
+                        .await
+                        .insert(id.clone(), cancel_handle.clone());
 
                     // Determine effective timeout (handler-specific overrides default)
                     let effective_timeout = handler.timeout.or(self.default_timeout);
 
                     // Execute handler with optional timeout
-                    let result = if let Some(timeout_duration) = effective_timeout {
-                        match tokio::time::timeout(timeout_duration, (handler.func)(ctx, request.params)).await {
-                            Ok(result) => result,
-                            Err(_elapsed) => {
-                                // Timeout elapsed - cancel the request
-                                cancel_handle.cancel();
-                                Err(RpcError::new(
-                                    error_codes::REQUEST_CANCELLED,
-                                    format!("Request timed out after {:?}", timeout_duration),
-                                ))
-                            },
-                        }
-                    } else {
-                        (handler.func)(ctx, request.params).await
+                    let result = match effective_timeout {
+                        Some(timeout_duration) => {
+                            match tokio::time::timeout(timeout_duration, (handler.func)(ctx, params)).await {
+                                Ok(result) => result,
+                                Err(_elapsed) => {
+                                    cancel_handle.cancel();
+                                    Err(RpcError::new(
+                                        error_codes::REQUEST_CANCELLED,
+                                        format!("Request timed out after {:?}", timeout_duration),
+                                    ))
+                                },
+                            }
+                        },
+                        None => (handler.func)(ctx, params).await,
                     };
 
                     // Unregister active request
-                    {
-                        let mut active = self.active_requests.lock().await;
-                        active.remove(&id);
-                    }
+                    self.active_requests.lock().await.remove(&id);
 
                     result
                 } else {
-                    Err(RpcError::method_not_found(method))
+                    Err(RpcError::method_not_found(&method))
                 }
             },
         };
 
         let duration = start_time.elapsed();
 
-        // Call post-request hook (skip for internal methods)
-        if !method.starts_with("$/") && method != methods::INITIALIZE && method != methods::SHUTDOWN {
+        // Debug: log profiling info
+        if self.debug_options.log_profiling {
+            let status = if result.is_ok() { "OK" } else { "ERR" };
+            eprintln!("[PROFILE] {} {:?} - {} ({:?})", method, id, status, duration);
+        }
+
+        // Call post-request hook
+        if call_hooks {
             if let Some(ref hook) = self.post_request_hook {
                 hook(&ResponseInfo {
                     method,
@@ -810,19 +1030,24 @@ impl PluginServer {
             }
         }
 
-        Some(match result {
+        let response = match result {
             Ok(value) => Response::success(id, value),
             Err(error) => Response::error(id, error),
-        })
+        };
+
+        // Debug: log response
+        if self.debug_options.log_responses {
+            if let Ok(json) = serde_json::to_string(&response) {
+                eprintln!("[DEBUG] ← {}", json);
+            }
+        }
+
+        Some(response)
     }
 
     async fn handle_cancel(&self, params: Option<serde_json::Value>) {
-        let params: CancelParams = match params {
-            Some(v) => match serde_json::from_value(v) {
-                Ok(p) => p,
-                Err(_) => return,
-            },
-            None => return,
+        let Some(params) = try_deserialize_params::<CancelParams>(params) else {
+            return;
         };
 
         let active = self.active_requests.lock().await;
@@ -837,10 +1062,7 @@ impl PluginServer {
             return Err(RpcError::new(error_codes::INVALID_REQUEST, "Already initialized"));
         }
 
-        let _params: InitializeParams = match params {
-            Some(v) => serde_json::from_value(v).map_err(|e| RpcError::invalid_params(e.to_string()))?,
-            None => return Err(RpcError::invalid_params("Missing params")),
-        };
+        let _params: InitializeParams = deserialize_params(params)?;
 
         self.initialized = true;
 

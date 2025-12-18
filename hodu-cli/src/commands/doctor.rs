@@ -1,7 +1,7 @@
 //! Doctor command - diagnose available devices and buildable targets on this host
 
 use crate::output::{self, colors};
-use crate::plugins::{PluginManager, PluginRegistry};
+use crate::plugins::{load_registry, PluginManager};
 use hodu_plugin::current_host_triple;
 
 pub fn execute() -> Result<(), Box<dyn std::error::Error>> {
@@ -16,8 +16,7 @@ pub fn execute() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
 
     // Collect backend plugins
     let backends: Vec<_> = registry.backends().collect();

@@ -19,9 +19,9 @@
 - [x] Implement middleware/hooks - pre/post request processing (logging, auth, etc.)
 
 **Code Deduplication:** (🟡 Important)
-- [ ] Extract param deserialization helper - duplicated in server.rs:502, 545, 826
-- [ ] Extract handler registration logic - duplicated 3 times in server.rs
-- [ ] Reduce excessive cloning in request processing - consider borrowing where possible
+- [x] Extract param deserialization helper - added `deserialize_params()` and `try_deserialize_params()` helpers
+- [x] Extract handler registration logic - added `register_handler()` helper method
+- [x] Reduce excessive cloning in request processing - destructure request, use `call_hooks` flag, simplify control flow
 
 **Plugin Metadata:** (🟡 Important)
 - [x] Add plugin metadata fields - description, author, homepage, license, repository
@@ -30,21 +30,45 @@
 
 **Code Quality:** (🟡 Important)
 - [x] Fix DType fallback masking in tensor.rs:52 - now panics with descriptive message for unknown dtypes
-- [ ] Remove dead code `with_state()` in context.rs:54 - unused method
+- [x] Remove dead code `with_state()` in context.rs:54 - removed unused method
 
 **Developer Experience:** (🟢 Nice-to-have)
 - [x] Implement health check endpoint - `$/ping` method for liveness probe
-- [ ] Implement automatic profiling - execution time measurement per handler
-- [ ] Implement streaming response - chunked output for large data
-- [ ] Implement hot reload support - file watcher for development
-- [ ] Add `#[derive(PluginMethod)]` macro - reduce boilerplate
+- [x] Implement automatic profiling - `enable_profiling()` logs execution times to stderr
+- [x] Implement streaming response - `StreamWriter` for chunked data via notifications
+- [x] ~~Implement hot reload support~~ - skipped (not useful for compiled plugins)
+- [x] Add `#[derive(PluginMethod)]` macro - `PluginMethod` derive, `plugin_handler` attr, `define_params/result` macros
 
 **Error Handling:** (🟢 Nice-to-have)
-- [ ] Implement error chain/cause - nested error information
-- [ ] Implement error recovery hints - suggested actions for common errors
-- [ ] Add structured error data - additional fields beyond code/message
+- [x] Implement error chain/cause - `with_cause()`, `with_error_cause()` methods
+- [x] Implement error recovery hints - `with_hint()`, `with_hints()` methods
+- [x] Add structured error data - `with_field()`, `with_details()`, `with_context()` methods
 
 **Testing:** (🟢 Nice-to-have)
-- [ ] Add mock server for testing - simulate CLI requests
-- [ ] Add integration test harness - end-to-end plugin testing
-- [ ] Add request/response logging mode - debug flag for development
+- [x] Add mock server for testing - `MockClient` for unit testing handlers
+- [x] Add integration test harness - `TestHarness` for E2E plugin testing
+- [x] Add request/response logging mode - `DebugOptions` and `.debug()` method
+
+---
+
+## Newly Discovered Issues (2nd Analysis)
+
+**Error Handling:** (🟡 Important)
+- [ ] Handle Mutex poisoning - `testing.rs:250,255,260` `.lock().unwrap()` unusable after panic
+- [ ] Handle notification flush failures - `server.rs:192,216` `stdout().flush()` result ignored
+- [ ] Preserve StreamWriter error context - `server.rs:302,322,342` original error info lost
+
+**Code Quality:** (🟢 Nice-to-have)
+- [x] Use Clippy div_ceil - `server.rs:360` `(data.len() + 2) / 3 * 4` → `.div_ceil(3) * 4`
+- [ ] Enable doc tests - multiple files use `/// ```ignore`, need actual tests
+
+**Validation:** (🟢 Nice-to-have)
+- [ ] Validate handler names - `server.rs:815` allows special characters/reserved names
+- [ ] Improve empty batch handling - `server.rs:878` JSON-RPC 2.0 spec unclear
+
+**Performance:** (🟢 Nice-to-have)
+- [ ] Use RwLock for logs - `testing.rs:179` use RwLock instead of Mutex for concurrent reads
+
+**Missing Features:** (🟢 Nice-to-have)
+- [ ] Add request size limit - `server.rs` large JSON payloads can exhaust memory
+- [ ] Add default request timeout - `server.rs` requests can wait indefinitely

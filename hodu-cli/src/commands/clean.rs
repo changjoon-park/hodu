@@ -1,6 +1,7 @@
 //! Clean command - remove cached build artifacts
 
 use crate::output;
+use crate::plugins::BACKEND_PREFIX;
 use clap::Args;
 use std::path::Path;
 
@@ -41,7 +42,7 @@ pub fn execute(args: CleanArgs) -> Result<(), Box<dyn std::error::Error>> {
             clean_directory(&backend_cache, &format!("{} cache", backend), args.dry_run)?;
         } else {
             // Try with prefix
-            let prefixed = format!("hodu-backend-{}-plugin", backend);
+            let prefixed = format!("{}{}-plugin", BACKEND_PREFIX, backend);
             let backend_cache = cache_dir.join(&prefixed);
             if backend_cache.exists() {
                 clean_directory(&backend_cache, &format!("{} cache", backend), args.dry_run)?;

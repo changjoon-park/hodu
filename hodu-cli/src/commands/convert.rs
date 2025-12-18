@@ -1,7 +1,7 @@
 //! Convert command - convert models and tensors between formats
 
 use crate::output;
-use crate::plugins::{PluginManager, PluginRegistry};
+use crate::plugins::{load_registry, PluginManager, PluginRegistry};
 use crate::tensor::{load_tensor_data, save_tensor_data};
 use crate::utils::{core_dtype_to_plugin, path_to_str, plugin_dtype_to_core};
 use clap::Args;
@@ -40,8 +40,7 @@ pub fn execute(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
         .map(|e| e.to_lowercase())
         .ok_or("Output file has no extension")?;
 
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
 
     // Determine conversion type (model or tensor)
     let is_model = is_model_format(&input_ext) || is_model_format(&output_ext);
@@ -183,14 +182,26 @@ fn convert_tensor(
                 return Err(format!("Plugin {} doesn't support saving tensors", plugin.name).into());
             }
 
-            // Save to temp hdt first
-            let temp_path = std::env::temp_dir().join(format!("hodu_convert_{}.hdt", std::process::id()));
+            // Save to temp hdt first (use PID + timestamp for uniqueness)
+            let temp_path = std::env::temp_dir().join(format!(
+                "hodu_convert_{}_{}.hdt",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
             save_tensor_data(&tensor_data, &temp_path)?;
 
             let client = manager.get_plugin(&plugin.name)?;
-            client.save_tensor(path_to_str(&temp_path)?, path_to_str(&args.output)?)?;
+            let result = client.save_tensor(path_to_str(&temp_path)?, path_to_str(&args.output)?);
 
-            let _ = std::fs::remove_file(&temp_path);
+            // Cleanup temp file (warn on failure)
+            if let Err(e) = std::fs::remove_file(&temp_path) {
+                output::warning(&format!("Failed to remove temp file: {}", e));
+            }
+
+            result?;
         },
     }
 

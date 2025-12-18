@@ -64,3 +64,50 @@ pub fn current_host_triple() -> &'static str {
     )))]
     return "unknown";
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_device_id() {
+        assert_eq!(parse_device_id("cuda::0"), Some(0));
+        assert_eq!(parse_device_id("cuda::1"), Some(1));
+        assert_eq!(parse_device_id("rocm::2"), Some(2));
+        assert_eq!(parse_device_id("cpu"), None);
+        assert_eq!(parse_device_id("metal"), None);
+        assert_eq!(parse_device_id("cuda::invalid"), None);
+    }
+
+    #[test]
+    fn test_device_type() {
+        assert_eq!(device_type("cuda::0"), "cuda");
+        assert_eq!(device_type("cuda::1"), "cuda");
+        assert_eq!(device_type("rocm::0"), "rocm");
+        assert_eq!(device_type("cpu"), "cpu");
+        assert_eq!(device_type("metal"), "metal");
+        assert_eq!(device_type("webgpu"), "webgpu");
+    }
+
+    #[test]
+    fn test_build_target_new() {
+        let target = BuildTarget::new("x86_64-unknown-linux-gnu", "cuda::0");
+        assert_eq!(target.triple, "x86_64-unknown-linux-gnu");
+        assert_eq!(target.device, "cuda::0");
+    }
+
+    #[test]
+    fn test_build_target_host() {
+        let target = BuildTarget::host("cpu");
+        assert_eq!(target.device, "cpu");
+        assert!(!target.triple.is_empty());
+    }
+
+    #[test]
+    fn test_current_host_triple() {
+        let triple = current_host_triple();
+        assert!(!triple.is_empty());
+        // Should contain architecture and OS
+        assert!(triple.contains('-'));
+    }
+}

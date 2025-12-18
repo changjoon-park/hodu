@@ -16,17 +16,50 @@
 **API Consistency:** (🟡 Important)
 - [x] Remove `current_target_triple()` in run.rs:469 - use `hodu_plugin::current_host_triple()` instead
 - [x] Replace `&PathBuf` with `&Path` parameters (clean.rs, tensor/loader.rs)
-- [ ] Standardize path parameter types - mix of `&Path`, `&str`, `impl AsRef<Path>` across convert.rs, run.rs, inspect.rs
+- [x] Standardize path parameter types - already consistent: `impl AsRef<Path>` for public APIs, `&Path` for internals, `path_to_str()` for RPC
 
 **Code Quality:** (🟡 Important)
-- [ ] Fix DType fallback to F32 in utils.rs:52 - should panic like SDK does for unknown dtypes
-- [ ] Extract registry loading pattern - duplicated ~15 times across commands
-- [ ] Extract plugin name prefix constants - magic strings like "hodu-backend-", "hodu-format-" scattered
-- [ ] Fix temp file PID collision risk - use UUID or atomic counter instead of PID
+- [x] Fix DType fallback to F32 in utils.rs:52 - now panics for unknown dtypes
+- [x] Extract registry loading pattern - added `load_registry()` and `load_registry_mut()` helpers
+- [x] Extract plugin name prefix constants - added `BACKEND_PREFIX`, `FORMAT_PREFIX`, `backend_plugin_name()`, `format_plugin_name()`
+- [x] Fix temp file PID collision risk - now uses PID + nanosecond timestamp
 
 **Code Quality:** (🟢 Nice-to-have)
 - [x] Remove unnecessary `#[allow(dead_code)]` in plugin/install.rs:30 - used the `description` field instead
-- [x] Refactor `.expect()` calls with safety comments to proper error handling (plugins/process.rs:72,93 kept with safety comments, commands/plugin.rs:520 refactored to `if let Some`)
+- [x] Refactor `.expect()` calls with safety comments to proper error handling
 - [x] Remove unused `_snapshot` variable in build.rs:122 - kept validation call without variable
-- [ ] Handle cleanup failures instead of ignoring (convert.rs:192, install.rs:220)
-- [ ] version.rs duplicates host triple detection logic - consider using hodu_plugin::current_host_triple()
+- [x] Handle cleanup failures instead of ignoring - now logs warning on failure
+- [x] version.rs duplicates host triple detection logic - now uses hodu_plugin::current_host_triple()
+
+---
+
+## Newly Discovered Issues (2nd Analysis)
+
+**Security:** (🔴 Critical)
+- [ ] Add plugin signature/hash verification - `plugin/install.rs` no integrity check for downloaded plugins
+- [ ] Prevent path traversal - `run.rs:352` `expand_path()` doesn't validate `../` sequences
+- [ ] Validate git URLs - `plugin/install.rs:175` no filtering for malicious URLs
+
+**Input Validation:** (🔴 Critical)
+- [ ] Fix JSON parsing integer overflow - `loader.rs:131` `as i32` cast truncates without range check
+- [ ] Validate u64→usize casting - `loader.rs:73` overflow possible on 32-bit systems
+- [ ] Add file size limits - `loader.rs:8` large files can exhaust memory
+
+**Resource Management:** (🟡 Important)
+- [ ] Use RAII pattern for temp directories - `plugin/install.rs:169` not cleaned up on panic
+- [ ] Add network timeout - `setup.rs:94` ureq calls have no timeout
+- [ ] Limit manifest.json size - `plugin/install.rs:414` large manifest can cause DoS
+
+**Error Handling:** (🟡 Important)
+- [ ] Log setup failures - `main.rs:50` `mark_setup_shown()` failure silently ignored
+- [ ] Include build stdout - `plugin/install.rs:258` only stderr shown, stdout missing
+- [ ] Include plugin capabilities in error - `convert.rs:90` show available capabilities in error message
+
+**Validation:** (🟢 Nice-to-have)
+- [ ] Validate input names - `run.rs:274` allows special characters/empty strings
+- [ ] Strengthen device string validation - `run.rs:400` no warning for unknown devices
+- [ ] Validate timeout range - `run.rs:62` no min/max bounds check
+
+**Reliability:** (🟢 Nice-to-have)
+- [ ] Add plugin update rollback - `plugin/update.rs` no restore to previous version on failure
+- [ ] Limit process spawning - `plugins/process.rs:66` unlimited process creation possible

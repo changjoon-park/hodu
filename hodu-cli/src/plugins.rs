@@ -14,3 +14,31 @@ pub use hodu_plugin_runtime::{
 mod process;
 
 pub use process::*;
+
+// Plugin name prefixes
+pub const BACKEND_PREFIX: &str = "hodu-backend-";
+pub const FORMAT_PREFIX: &str = "hodu-format-";
+
+/// Generate backend plugin name from short name
+pub fn backend_plugin_name(name: &str) -> String {
+    format!("{}{}", BACKEND_PREFIX, name)
+}
+
+/// Generate format plugin name from short name
+pub fn format_plugin_name(name: &str) -> String {
+    format!("{}{}", FORMAT_PREFIX, name)
+}
+
+/// Load plugin registry from default path
+pub fn load_registry() -> Result<PluginRegistry, Box<dyn std::error::Error>> {
+    let registry_path = PluginRegistry::default_path()?;
+    let registry = PluginRegistry::load(&registry_path)?;
+    Ok(registry)
+}
+
+/// Load mutable plugin registry from default path (returns path for saving)
+pub fn load_registry_mut() -> Result<(PluginRegistry, std::path::PathBuf), Box<dyn std::error::Error>> {
+    let registry_path = PluginRegistry::default_path()?;
+    let registry = PluginRegistry::load(&registry_path)?;
+    Ok((registry, registry_path))
+}

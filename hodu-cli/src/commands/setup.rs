@@ -2,7 +2,7 @@
 
 use crate::commands::plugin::{get_plugins_dir, install_from_registry};
 use crate::output;
-use crate::plugins::PluginRegistry;
+use crate::plugins::load_registry;
 use inquire::Select;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -23,21 +23,10 @@ struct PresetInfo {
 
 /// Check if this is the first run (no plugins installed)
 pub fn is_first_run() -> bool {
-    let registry_path = match PluginRegistry::default_path() {
-        Ok(p) => p,
-        Err(_) => return true,
-    };
-
-    if !registry_path.exists() {
-        return true;
+    match load_registry() {
+        Ok(registry) => registry.plugins.is_empty(),
+        Err(_) => true,
     }
-
-    let registry = match PluginRegistry::load(&registry_path) {
-        Ok(r) => r,
-        Err(_) => return true,
-    };
-
-    registry.plugins.is_empty()
 }
 
 /// Run the first-time setup wizard

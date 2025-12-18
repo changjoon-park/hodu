@@ -2,7 +2,8 @@
 
 use crate::output;
 use crate::plugins::{
-    detect_plugin_type, DetectedPluginType, PluginCapabilities, PluginEntry, PluginRegistry, PluginSource, PluginType,
+    detect_plugin_type, load_registry_mut, DetectedPluginType, PluginCapabilities, PluginEntry, PluginSource,
+    PluginType,
 };
 use hodu_plugin::PLUGIN_VERSION;
 use std::path::{Path, PathBuf};
@@ -216,8 +217,10 @@ pub fn install_from_git(
     };
     let result = install_from_path(&install_path, debug, force, source);
 
-    // Cleanup temp directory
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    // Cleanup temp directory (warn on failure)
+    if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
+        output::warning(&format!("Failed to remove temp directory: {}", e));
+    }
 
     result
 }
@@ -365,8 +368,7 @@ pub fn install_from_path(
     }
 
     // Load registry
-    let registry_path = PluginRegistry::default_path()?;
-    let mut registry = PluginRegistry::load(&registry_path)?;
+    let (mut registry, registry_path) = load_registry_mut()?;
 
     // Check if already installed
     if let Some(existing) = registry.find(&name) {

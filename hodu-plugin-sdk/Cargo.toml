@@ -15,6 +15,7 @@ categories = ["development-tools", "science"]
 [dependencies]
 hodu_core = { workspace = true, features = ["serde", "f8e5m2", "f64", "u16", "u64", "i16", "i64"] }
 hodu_plugin = { workspace = true }
+hodu-plugin-sdk_macros = { path = "macros", version = "0.1.0" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }

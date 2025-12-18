@@ -3,7 +3,7 @@
 //! This command uses JSON-RPC based plugins to load models and run inference.
 
 use crate::output;
-use crate::plugins::{PluginManager, PluginRegistry};
+use crate::plugins::{backend_plugin_name, load_registry, PluginManager, PluginRegistry};
 use crate::tensor::{load_tensor_data, load_tensor_file, save_outputs, save_tensor_data};
 use crate::utils::{core_dtype_to_plugin, path_to_str, plugin_dtype_to_core};
 use clap::Args;
@@ -78,8 +78,7 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         .map(|e| e.to_lowercase());
 
     // Load plugin registry
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
 
     // Check for model format plugin (for non-builtin formats)
     let format_plugin = match extension.as_deref() {
@@ -411,7 +410,7 @@ fn find_backend_plugin<'a>(
         if let Some(plugin) = registry.find(name) {
             return Ok(plugin);
         }
-        let prefixed = format!("hodu-backend-{}", name);
+        let prefixed = backend_plugin_name(name);
         if let Some(plugin) = registry.find(&prefixed) {
             return Ok(plugin);
         }

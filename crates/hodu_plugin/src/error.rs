@@ -1,6 +1,7 @@
 //! Plugin error types
 
 use std::fmt;
+use std::sync::Arc;
 
 /// Plugin error type
 ///
@@ -13,8 +14,11 @@ pub enum PluginError {
     NotSupported(String),
     /// Invalid input or argument
     InvalidInput(String),
-    /// I/O error
-    Io(String),
+    /// I/O error with source preserved
+    Io {
+        message: String,
+        source: Option<Arc<std::io::Error>>,
+    },
     /// Execution error
     Execution(String),
     /// Internal error
@@ -25,12 +29,30 @@ pub enum PluginError {
     Save(String),
 }
 
+impl PluginError {
+    /// Create an I/O error with just a message
+    pub fn io(message: impl Into<String>) -> Self {
+        Self::Io {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// Create an I/O error with source
+    pub fn io_with_source(source: std::io::Error) -> Self {
+        Self::Io {
+            message: source.to_string(),
+            source: Some(Arc::new(source)),
+        }
+    }
+}
+
 impl fmt::Display for PluginError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotSupported(msg) => write!(f, "not supported: {}", msg),
             Self::InvalidInput(msg) => write!(f, "invalid input: {}", msg),
-            Self::Io(msg) => write!(f, "io error: {}", msg),
+            Self::Io { message, .. } => write!(f, "io error: {}", message),
             Self::Execution(msg) => write!(f, "execution error: {}", msg),
             Self::Internal(msg) => write!(f, "internal error: {}", msg),
             Self::Load(msg) => write!(f, "load error: {}", msg),
@@ -39,11 +61,18 @@ impl fmt::Display for PluginError {
     }
 }
 
-impl std::error::Error for PluginError {}
+impl std::error::Error for PluginError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source: Some(e), .. } => Some(e.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 impl From<std::io::Error> for PluginError {
     fn from(e: std::io::Error) -> Self {
-        PluginError::Io(e.to_string())
+        PluginError::io_with_source(e)
     }
 }
 

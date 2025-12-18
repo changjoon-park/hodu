@@ -3,7 +3,7 @@
 //! This command uses JSON-RPC based plugins to compile models.
 
 use crate::output;
-use crate::plugins::{PluginManager, PluginRegistry};
+use crate::plugins::{load_registry, PluginManager, PluginRegistry};
 use crate::utils::path_to_str;
 use clap::Args;
 use hodu_core::snapshot::Snapshot;
@@ -57,8 +57,7 @@ pub struct BuildArgs {
 }
 
 pub fn execute(args: BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
 
     // Normalize device (lowercase)
     let device = args.device.to_lowercase();

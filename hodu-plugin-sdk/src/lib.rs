@@ -54,6 +54,7 @@ mod backend;
 mod context;
 pub mod server;
 mod tensor;
+pub mod testing;
 
 // Re-export rpc module from hodu_plugin
 pub use hodu_plugin::rpc;
@@ -73,8 +74,14 @@ pub use tensor::{SdkDType, TensorDataExt};
 // Re-export notification helpers for convenience
 pub use server::{log_debug, log_error, log_info, log_warn, notify_log, notify_progress};
 
+// Re-export streaming support
+pub use server::StreamWriter;
+
 // Re-export middleware/hook types
 pub use server::{PreRequestAction, RequestInfo, ResponseInfo};
+
+// Re-export debug options
+pub use server::DebugOptions;
 
 // Plugin SDK specific types (for plugin development only)
 pub use artifact::*;
@@ -92,3 +99,6 @@ pub use hodu_core::{
     tensor::Tensor,
     types::{DType, Device as CoreDevice, Layout, Shape},
 };
+
+// Re-export procedural macros
+pub use hodu_plugin_sdk_macros::{define_params, define_result, plugin_handler, PluginMethod};

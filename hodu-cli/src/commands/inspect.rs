@@ -3,7 +3,7 @@
 //! This command inspects model and tensor files, optionally using format plugins.
 
 use crate::output::{self, colors};
-use crate::plugins::{PluginManager, PluginRegistry};
+use crate::plugins::{load_registry, PluginManager};
 use crate::tensor::load_tensor_data;
 use crate::utils::path_to_str;
 use clap::Args;
@@ -253,8 +253,7 @@ fn inspect_with_plugin(args: &InspectArgs, ext: &str) -> Result<(), Box<dyn std:
     })?;
 
     // Get plugin entry from registry for capability check
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
 
     // Try model format first, then tensor format
     let plugin_entry = registry

@@ -50,16 +50,6 @@ impl Context {
         }
     }
 
-    /// Create a new context with shared state
-    #[allow(dead_code)]
-    pub(crate) fn with_state<S: Send + Sync + 'static>(request_id: RequestId, state: Arc<S>) -> Self {
-        Self {
-            request_id,
-            cancellation_token: CancellationToken::new(),
-            state: Some(state),
-        }
-    }
-
     /// Create a new context with a dynamic shared state
     pub(crate) fn with_state_dyn(request_id: RequestId, state: Arc<dyn Any + Send + Sync>) -> Self {
         Self {

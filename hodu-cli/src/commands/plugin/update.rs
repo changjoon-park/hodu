@@ -2,13 +2,12 @@
 
 use super::install::{fetch_official_registry, install_from_git, install_from_path, install_from_registry};
 use crate::output;
-use crate::plugins::{PluginRegistry, PluginSource};
+use crate::plugins::{backend_plugin_name, format_plugin_name, load_registry, PluginSource};
 use hodu_plugin::PLUGIN_VERSION;
 use std::path::PathBuf;
 
 pub fn update_plugins(name: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let registry_path = PluginRegistry::default_path()?;
-    let registry = PluginRegistry::load(&registry_path)?;
+    let registry = load_registry()?;
 
     let plugins_to_update: Vec<_> = if let Some(name) = name {
         // Update specific plugin
@@ -16,8 +15,8 @@ pub fn update_plugins(name: Option<&str>) -> Result<(), Box<dyn std::error::Erro
             Some(p) => vec![p.clone()],
             None => {
                 // Try with prefix
-                let backend_name = format!("hodu-backend-{}", name);
-                let format_name = format!("hodu-format-{}", name);
+                let backend_name = backend_plugin_name(name);
+                let format_name = format_plugin_name(name);
                 if let Some(p) = registry.find(&backend_name) {
                     vec![p.clone()]
                 } else if let Some(p) = registry.find(&format_name) {

@@ -1,6 +1,7 @@
 //! Tensor data types for cross-plugin communication
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::str::FromStr;
 
 /// Plugin data type enum (independent from hodu_core::DType for ABI stability)
@@ -112,8 +113,28 @@ impl PluginDType {
     }
 }
 
+/// Error type for PluginDType parsing
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseDTypeError {
+    dtype: String,
+}
+
+impl ParseDTypeError {
+    fn new(dtype: impl Into<String>) -> Self {
+        Self { dtype: dtype.into() }
+    }
+}
+
+impl fmt::Display for ParseDTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Unknown dtype: {}", self.dtype)
+    }
+}
+
+impl std::error::Error for ParseDTypeError {}
+
 impl FromStr for PluginDType {
-    type Err = String;
+    type Err = ParseDTypeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -132,7 +153,7 @@ impl FromStr for PluginDType {
             "i16" => Ok(Self::I16),
             "i32" => Ok(Self::I32),
             "i64" => Ok(Self::I64),
-            _ => Err(format!("Unknown dtype: {}", s)),
+            _ => Err(ParseDTypeError::new(s)),
         }
     }
 }
@@ -222,5 +243,111 @@ impl TensorData {
     /// Check if tensor is scalar (rank 0)
     pub fn is_scalar(&self) -> bool {
         self.shape.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plugin_dtype_from_str() {
+        assert_eq!("f32".parse::<PluginDType>().unwrap(), PluginDType::F32);
+        assert_eq!("F32".parse::<PluginDType>().unwrap(), PluginDType::F32);
+        assert_eq!("bool".parse::<PluginDType>().unwrap(), PluginDType::BOOL);
+        assert_eq!("i64".parse::<PluginDType>().unwrap(), PluginDType::I64);
+        assert_eq!("bf16".parse::<PluginDType>().unwrap(), PluginDType::BF16);
+        assert!("invalid".parse::<PluginDType>().is_err());
+    }
+
+    #[test]
+    fn test_parse_dtype_error() {
+        let err = "invalid".parse::<PluginDType>().unwrap_err();
+        assert_eq!(err.to_string(), "Unknown dtype: invalid");
+    }
+
+    #[test]
+    fn test_tensor_data_new_checked_valid() {
+        // 2x3 F32 tensor = 6 elements * 4 bytes = 24 bytes
+        let data = vec![0u8; 24];
+        let result = TensorData::new_checked(data, vec![2, 3], PluginDType::F32);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tensor_data_new_checked_invalid() {
+        // Wrong size: 2x3 F32 needs 24 bytes, providing 12
+        let data = vec![0u8; 12];
+        let result = TensorData::new_checked(data, vec![2, 3], PluginDType::F32);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err,
+            TensorDataError::SizeMismatch {
+                expected: 24,
+                actual: 12
+            }
+        );
+    }
+
+    #[test]
+    fn test_tensor_data_is_valid() {
+        let valid = TensorData::new(vec![0u8; 8], vec![2], PluginDType::F32);
+        assert!(valid.is_valid());
+
+        let invalid = TensorData::new(vec![0u8; 4], vec![2], PluginDType::F32);
+        assert!(!invalid.is_valid());
+    }
+
+    #[test]
+    fn test_tensor_data_is_scalar() {
+        let scalar = TensorData::new(vec![0u8; 4], vec![], PluginDType::F32);
+        assert!(scalar.is_scalar());
+        assert_eq!(scalar.rank(), 0);
+
+        let non_scalar = TensorData::new(vec![0u8; 4], vec![1], PluginDType::F32);
+        assert!(!non_scalar.is_scalar());
+        assert_eq!(non_scalar.rank(), 1);
+    }
+
+    #[test]
+    fn test_tensor_data_numel() {
+        let tensor = TensorData::new(vec![], vec![2, 3, 4], PluginDType::F32);
+        assert_eq!(tensor.numel(), 24);
+
+        let scalar = TensorData::new(vec![], vec![], PluginDType::F32);
+        assert_eq!(scalar.numel(), 1);
+    }
+
+    #[test]
+    fn test_plugin_dtype_size() {
+        assert_eq!(PluginDType::BOOL.size_in_bytes(), 1);
+        assert_eq!(PluginDType::F16.size_in_bytes(), 2);
+        assert_eq!(PluginDType::F32.size_in_bytes(), 4);
+        assert_eq!(PluginDType::F64.size_in_bytes(), 8);
+        assert_eq!(PluginDType::I8.size_in_bytes(), 1);
+        assert_eq!(PluginDType::I64.size_in_bytes(), 8);
+    }
+
+    #[test]
+    fn test_plugin_dtype_display() {
+        assert_eq!(PluginDType::F32.to_string(), "f32");
+        assert_eq!(PluginDType::BOOL.to_string(), "bool");
+        assert_eq!(PluginDType::BF16.to_string(), "bf16");
+    }
+
+    #[test]
+    fn test_plugin_dtype_properties() {
+        assert!(PluginDType::F32.is_float());
+        assert!(!PluginDType::F32.is_integer());
+        assert!(PluginDType::F32.is_signed());
+
+        assert!(!PluginDType::I32.is_float());
+        assert!(PluginDType::I32.is_integer());
+        assert!(PluginDType::I32.is_signed());
+
+        assert!(!PluginDType::U32.is_float());
+        assert!(PluginDType::U32.is_integer());
+        assert!(!PluginDType::U32.is_signed());
     }
 }
