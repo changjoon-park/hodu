@@ -5,7 +5,9 @@ use crate::plugins::{
     detect_plugin_type, load_registry_mut, DetectedPluginType, PluginCapabilities, PluginEntry, PluginSource,
     PluginType,
 };
+use fs2::FileExt;
 use hodu_plugin::PLUGIN_VERSION;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
@@ -404,8 +406,24 @@ pub fn install_from_path(
     };
 
     // Check plugin protocol version compatibility
-    let host_parts: Vec<u32> = PLUGIN_VERSION.split('.').filter_map(|s| s.parse().ok()).collect();
-    let plugin_parts: Vec<u32> = plugin_version.split('.').filter_map(|s| s.parse().ok()).collect();
+    let host_parts: Vec<u32> = PLUGIN_VERSION
+        .split('.')
+        .map(|s| {
+            s.parse::<u32>()
+                .map_err(|_| format!("Invalid host version component: '{}'", s))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let plugin_parts: Vec<u32> = plugin_version
+        .split('.')
+        .map(|s| {
+            s.parse::<u32>().map_err(|_| {
+                format!(
+                    "Invalid plugin version component: '{}' in version '{}'",
+                    s, plugin_version
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     if host_parts.len() >= 2 && plugin_parts.len() >= 2 {
         let (host_major, host_minor) = (host_parts[0], host_parts[1]);
@@ -428,8 +446,13 @@ pub fn install_from_path(
         }
     }
 
-    // Load registry
+    // Load registry with file locking to prevent concurrent modifications
     let (mut registry, registry_path) = load_registry_mut()?;
+    let lock_path = registry_path.with_extension("lock");
+    let lock_file = File::create(&lock_path).map_err(|e| format!("Failed to create lock file: {}", e))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|e| format!("Failed to acquire lock (another installation in progress?): {}", e))?;
 
     // Check if already installed
     if let Some(existing) = registry.find(&name) {

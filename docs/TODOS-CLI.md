@@ -130,3 +130,21 @@
 **Error Handling:** (🟢 Nice-to-have)
 - [x] Log warning on Ctrl+C handler failure - `run.rs:229` now logs warning if `ctrlc::set_handler()` fails
 - [x] Log warning on backup removal failure - `install.rs:481-484` now logs warning if backup file removal fails
+
+---
+
+## Newly Discovered Issues (7th Analysis)
+
+**Resource Safety:** (🔴 Critical)
+- [x] Add size check before reading snapshot - `run.rs:232` now checks snapshot size against 10GB limit before reading
+- [x] Add plugin spawn timeout - `process.rs:20,149-159` added 30s spawn timeout, then switches to operation timeout
+- [x] Add file locking for concurrent plugin installs - `install.rs:447-452` now uses fs2 file locking to prevent concurrent installs
+
+**Validation:** (🟡 Important)
+- [x] Add symlink cycle detection in dir_size - `clean.rs:82-93` now skips symlinks to avoid cycles and double-counting
+- [x] Strengthen device string validation - `run.rs:463-502` already validates numeric portion with proper error messages
+- [x] Return error on invalid manifest version - `install.rs:407-420` now returns error on invalid version components
+
+**Code Quality:** (🟢 Nice-to-have)
+- [x] Add length limit for output tensor names - `saver.rs:12` added MAX_OUTPUT_NAME_LENGTH (255 chars)
+- [x] Standardize error message format - documented as existing behavior matches Cargo-style errors

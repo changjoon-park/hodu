@@ -79,10 +79,18 @@ fn clean_directory(path: &Path, name: &str, dry_run: bool) -> Result<(), Box<dyn
 
 fn dir_size(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
     let mut size = 0;
+    // Skip symlinks to avoid cycles and double-counting
+    if path.is_symlink() {
+        return Ok(0);
+    }
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
             let path = entry.path();
+            // Skip symlinks
+            if path.is_symlink() {
+                continue;
+            }
             if path.is_dir() {
                 size += dir_size(&path)?;
             } else {

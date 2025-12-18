@@ -106,3 +106,17 @@
 
 **Code Quality:** (🟢 Nice-to-have)
 - [x] Remove unnecessary unwrap in device_type - `backend.rs:51-52` now returns `split().next()` directly without wrapping in Some+unwrap
+
+---
+
+## Newly Discovered Issues (7th Analysis)
+
+**Validation:** (🟡 Important)
+- [x] Add size limit to hints array - `rpc.rs:33,1124-1127` added MAX_HINTS (20) and enforces limit in with_hint()
+- [x] Add path traversal check to validate_path - `rpc.rs:75-81` now checks for ".." traversal sequences
+- [x] Validate field key names in with_field - `rpc.rs:35-36,1173-1180` warns in debug builds if using reserved field names
+
+**Code Quality:** (🟢 Nice-to-have)
+- [x] Extract shared is_valid_name() helper - `rpc.rs:85-91` added `is_valid_tensor_name()` helper, used by both TensorInput and TensorOutput
+- [x] Align Notification::progress() with ProgressParams validation - `rpc.rs:922-925` documented the intentional difference (convenience clamping vs strict validation)
+- [x] Document numel_unchecked() overflow behavior - `tensor.rs:260-272` added Warning section and example in docstring

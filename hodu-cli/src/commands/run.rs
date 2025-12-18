@@ -228,7 +228,18 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Compute cache key from snapshot content
+    // Compute cache key from snapshot content (with size limit check)
+    const MAX_SNAPSHOT_SIZE: u64 = 10 * 1024 * 1024 * 1024; // 10GB limit
+    let snapshot_size = std::fs::metadata(&snapshot_path)
+        .map_err(|e| format!("Failed to read snapshot metadata: {}", e))?
+        .len();
+    if snapshot_size > MAX_SNAPSHOT_SIZE {
+        return Err(format!(
+            "Snapshot file too large: {} bytes (max: {} bytes)",
+            snapshot_size, MAX_SNAPSHOT_SIZE
+        )
+        .into());
+    }
     let snapshot_content = std::fs::read(&snapshot_path).map_err(|e| format!("Failed to read snapshot: {}", e))?;
     let mut hasher = Sha256::new();
     hasher.update(&snapshot_content);

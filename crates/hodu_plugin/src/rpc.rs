@@ -29,6 +29,12 @@ pub const MAX_SUPPORTED_TARGETS: usize = 50;
 /// Maximum number of inputs in a RunParams request
 pub const MAX_INPUTS: usize = 1000;
 
+/// Maximum number of hints in error data
+pub const MAX_HINTS: usize = 20;
+
+/// Reserved field names in error data
+const RESERVED_ERROR_FIELDS: &[&str] = &["cause", "hints", "details", "context", "original_data"];
+
 /// Error type for parameter validation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
@@ -46,7 +52,7 @@ impl std::fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
-/// Validate a path string (non-empty, no null bytes, not all whitespace)
+/// Validate a path string (non-empty, no null bytes, not all whitespace, no path traversal)
 fn validate_path(path: &str, field: &str) -> Result<(), ValidationError> {
     if path.is_empty() {
         return Err(ValidationError {
@@ -66,7 +72,19 @@ fn validate_path(path: &str, field: &str) -> Result<(), ValidationError> {
             message: "path contains null byte".to_string(),
         });
     }
+    // Check for path traversal sequences
+    if path.contains("..") {
+        return Err(ValidationError {
+            field: field.to_string(),
+            message: "path contains traversal sequence (..)".to_string(),
+        });
+    }
     Ok(())
+}
+
+/// Validate a tensor name (non-empty, no control chars, no path separators)
+fn is_valid_tensor_name(name: &str) -> bool {
+    !name.is_empty() && !name.chars().any(|c| c.is_control()) && !name.contains('/') && !name.contains('\\')
 }
 
 /// Validate a non-empty string field
@@ -518,10 +536,7 @@ impl TensorInput {
 
     /// Validate tensor name (non-empty, no control chars, no path separators)
     pub fn is_valid_name(&self) -> bool {
-        !self.name.is_empty()
-            && !self.name.chars().any(|c| c.is_control())
-            && !self.name.contains('/')
-            && !self.name.contains('\\')
+        is_valid_tensor_name(&self.name)
     }
 
     /// Validate the tensor input
@@ -574,10 +589,7 @@ impl TensorOutput {
 
     /// Validate tensor name (non-empty, no control chars, no path separators)
     pub fn is_valid_name(&self) -> bool {
-        !self.name.is_empty()
-            && !self.name.chars().any(|c| c.is_control())
-            && !self.name.contains('/')
-            && !self.name.contains('\\')
+        is_valid_tensor_name(&self.name)
     }
 }
 
@@ -903,8 +915,13 @@ impl Notification {
     /// # Arguments
     /// * `percent` - Progress percentage (0-100), None for indeterminate. Values > 100 are clamped.
     /// * `message` - Human-readable progress message
+    ///
+    /// # Note
+    ///
+    /// This method silently clamps percent values > 100 to 100 for convenience.
+    /// For strict validation that rejects invalid values, use `ProgressParams::validate()`.
     pub fn progress(percent: Option<u8>, message: impl Into<String>) -> Self {
-        // Clamp percent to valid range 0-100
+        // Clamp percent to valid range 0-100 (for convenience; strict validation available via ProgressParams::validate())
         let percent = percent.map(|p| p.min(100));
         let message = message.into();
 
@@ -1108,7 +1125,10 @@ impl RpcError {
                 if let Some(obj) = data.as_object_mut() {
                     if let Some(hints) = obj.get_mut("hints") {
                         if let Some(arr) = hints.as_array_mut() {
-                            arr.push(serde_json::json!(hint_str));
+                            // Enforce hints limit
+                            if arr.len() < MAX_HINTS {
+                                arr.push(serde_json::json!(hint_str));
+                            }
                         } else {
                             // hints exists but is not an array - convert to array
                             let existing = hints.take();
@@ -1154,6 +1174,14 @@ impl RpcError {
     /// ```
     pub fn with_field(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         let key = key.into();
+        // Warn if using reserved field names (they might be overwritten by other methods)
+        if RESERVED_ERROR_FIELDS.contains(&key.as_str()) {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: with_field() using reserved field name '{}', may be overwritten",
+                key
+            );
+        }
         self.data = Some(match self.data {
             Some(mut data) => {
                 if let Some(obj) = data.as_object_mut() {

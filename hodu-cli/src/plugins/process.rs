@@ -16,6 +16,9 @@ use std::time::Duration;
 /// Maximum number of concurrent plugin processes
 const MAX_PLUGIN_PROCESSES: usize = 16;
 
+/// Timeout for plugin spawn and initialization (30 seconds)
+const PLUGIN_SPAWN_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Unified plugin manager for CLI
 ///
 /// Manages both format and backend plugin processes with CLI-specific
@@ -143,14 +146,17 @@ impl PluginManager {
         // Create client
         let mut client = PluginClient::new(&mut child).map_err(ProcessError::Client)?;
 
-        // Set timeout
-        client.set_timeout(self.timeout);
+        // Set spawn timeout for initialization (shorter than operation timeout)
+        client.set_timeout(PLUGIN_SPAWN_TIMEOUT);
 
         // Set CLI-specific notification handler
         client.set_notification_handler(Box::new(cli_notification_handler));
 
-        // Initialize
+        // Initialize with spawn timeout
         let info = client.initialize().map_err(ProcessError::Client)?;
+
+        // Set operation timeout for subsequent calls
+        client.set_timeout(self.timeout);
 
         Ok(ManagedPlugin { child, client, info })
     }

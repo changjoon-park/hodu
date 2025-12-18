@@ -130,3 +130,18 @@
 
 **Reliability:** (🟡 Important)
 - [x] Add RAII guard for active_requests cleanup - `server.rs:447-476` added `ActiveRequestGuard` struct that removes request from active_requests on drop, ensuring cleanup even if handler panics
+
+---
+
+## Newly Discovered Issues (7th Analysis)
+
+**Validation:** (🟡 Important)
+- [x] Add timeout for initialize request - initialization uses spawn timeout (30s) via `PLUGIN_SPAWN_TIMEOUT`
+- [x] Add limits to StreamWriter output - `server.rs:54-58` added MAX_STREAM_CHUNK_SIZE (10MB) and MAX_STREAM_CHUNKS (10000)
+- [x] Validate capabilities/devices array sizes - `server.rs:1321-1327` now calls `result.validate_limits()` before returning
+- [x] Log or track state downcast failures - `context.rs:84-92` now logs warning in debug builds on type mismatch
+
+**Code Quality:** (🟢 Nice-to-have)
+- [x] Track skipped cleanups in ActiveRequestGuard - `server.rs:493-499` now logs warning in debug builds on lock contention
+- [x] Use saturating arithmetic in base64 capacity - `server.rs:400-401` now uses saturating_add to prevent overflow
+- [x] Warn on duplicate request IDs in batch - `server.rs:1052-1061` now warns on duplicate IDs using HashSet

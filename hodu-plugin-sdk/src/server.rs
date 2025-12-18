@@ -51,6 +51,12 @@ const MAX_BATCH_SIZE: usize = 100;
 /// Default request timeout (5 minutes)
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Maximum StreamWriter chunk size (10MB)
+const MAX_STREAM_CHUNK_SIZE: usize = 10 * 1024 * 1024;
+
+/// Maximum StreamWriter total chunks (prevents unbounded memory)
+const MAX_STREAM_CHUNKS: usize = 10000;
+
 /// Reserved method name prefixes that plugins cannot register
 const RESERVED_PREFIXES: &[&str] = &["$/", "rpc.", "system."];
 
@@ -312,6 +318,26 @@ impl StreamWriter {
     ) -> Result<(), std::io::Error> {
         use std::io::Write;
 
+        // Check chunk size limit
+        if data.len() > MAX_STREAM_CHUNK_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "Chunk size {} exceeds maximum {} bytes",
+                    data.len(),
+                    MAX_STREAM_CHUNK_SIZE
+                ),
+            ));
+        }
+
+        // Check total chunks limit
+        if self.chunk_index >= MAX_STREAM_CHUNKS {
+            return Err(std::io::Error::other(format!(
+                "Maximum stream chunks ({}) exceeded",
+                MAX_STREAM_CHUNKS
+            )));
+        }
+
         let encoded = base64_encode(data);
         let mut params = serde_json::json!({
             "index": self.chunk_index,
@@ -397,7 +423,9 @@ impl StreamWriter {
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-    let mut result = Vec::with_capacity(data.len().div_ceil(3) * 4);
+    // Use saturating arithmetic to prevent overflow on 32-bit systems with huge data
+    let capacity = data.len().saturating_add(2) / 3 * 4;
+    let mut result = Vec::with_capacity(capacity);
 
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
@@ -459,6 +487,13 @@ impl Drop for ActiveRequestGuard {
         // If we can't get the lock, the cleanup will happen eventually when the server processes the next request
         if let Ok(mut guard) = self.active_requests.try_lock() {
             guard.remove(&self.id);
+        } else {
+            // Log skipped cleanup in debug builds for tracking potential resource leaks
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Skipped active_request cleanup for {:?} (lock contention)",
+                self.id
+            );
         }
     }
 }
@@ -1018,6 +1053,17 @@ impl PluginServer {
             )];
         }
 
+        // Check for duplicate request IDs (warn but continue)
+        let mut seen_ids = std::collections::HashSet::new();
+        for req_value in &requests {
+            if let Some(id) = req_value.get("id") {
+                let id_str = id.to_string();
+                if !seen_ids.insert(id_str.clone()) {
+                    eprintln!("Warning: Duplicate request ID in batch: {}", id_str);
+                }
+            }
+        }
+
         let mut responses = Vec::new();
         for req_value in requests {
             // Convert Value directly to Request (avoids double-parsing)
@@ -1268,6 +1314,14 @@ impl PluginServer {
             devices: self.devices.clone(),
             metadata,
         };
+
+        // Validate result limits before sending
+        if let Err(e) = result.validate_limits() {
+            return Err(RpcError::internal_error(format!(
+                "Plugin configuration exceeds limits: {}",
+                e
+            )));
+        }
 
         serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))
     }

@@ -8,10 +8,22 @@ use hodu_plugin::TensorData;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Maximum length for tensor output names (255 chars, common filesystem limit)
+const MAX_OUTPUT_NAME_LENGTH: usize = 255;
+
 /// Validate tensor output name to prevent path traversal attacks
 fn validate_output_name(name: &str) -> Result<(), Box<dyn std::error::Error>> {
     if name.is_empty() {
         return Err("Output tensor name cannot be empty".into());
+    }
+    // Check length limit
+    if name.len() > MAX_OUTPUT_NAME_LENGTH {
+        return Err(format!(
+            "Output tensor name too long: {} chars (max: {})",
+            name.len(),
+            MAX_OUTPUT_NAME_LENGTH
+        )
+        .into());
     }
     // Check for path separators and traversal sequences
     if name.contains('/') || name.contains('\\') || name.contains("..") {

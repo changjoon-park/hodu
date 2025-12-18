@@ -78,7 +78,18 @@ impl Context {
     /// }
     /// ```
     pub fn state<S: Send + Sync + 'static>(&self) -> Option<Arc<S>> {
-        self.state.as_ref().and_then(|s| s.clone().downcast::<S>().ok())
+        self.state.as_ref().and_then(|s| match s.clone().downcast::<S>() {
+            Ok(state) => Some(state),
+            Err(_) => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: State downcast failed for type '{}' (request_id: {:?})",
+                    std::any::type_name::<S>(),
+                    self.request_id
+                );
+                None
+            },
+        })
     }
 
     /// Get the request ID

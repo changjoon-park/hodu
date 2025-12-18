@@ -256,7 +256,20 @@ impl TensorData {
     /// Number of elements in the tensor (unchecked)
     ///
     /// Returns `usize::MAX` if the shape product overflows.
-    /// Prefer `numel()` for safer overflow handling.
+    ///
+    /// # Warning
+    ///
+    /// Using the return value in calculations when overflow has occurred
+    /// (indicated by `usize::MAX`) can produce incorrect results silently.
+    /// Prefer `numel()` which returns `Option<usize>` for explicit error handling.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use hodu_plugin::TensorData;
+    /// let data = TensorData::new(vec![0u8; 12], vec![3, 4], hodu_plugin::PluginDType::F32);
+    /// assert_eq!(data.numel_unchecked(), 12);
+    /// ```
     pub fn numel_unchecked(&self) -> usize {
         Self::checked_numel(&self.shape).unwrap_or(usize::MAX)
     }
