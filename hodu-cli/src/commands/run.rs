@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tempfile::NamedTempFile;
 
 /// Minimum timeout in seconds
 const MIN_TIMEOUT_SECS: u64 = 1;
@@ -191,19 +192,19 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     let inputs = parse_inputs(&all_inputs, &snapshot)?;
 
     // Save input tensors to temp files and create TensorInput refs
-    // Use PID + nanosecond timestamp for unpredictable temp filenames
+    // Use tempfile crate for secure, atomic temp file creation
     let mut input_refs = Vec::new();
+    let mut temp_files = Vec::new(); // Keep temp files alive until inference completes
     for (name, tensor_data) in &inputs {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let temp_path = std::env::temp_dir().join(format!("hodu_input_{}_{}_{}.hdt", name, std::process::id(), nanos));
+        let temp_file = NamedTempFile::with_prefix(format!("hodu_input_{}_", name))
+            .map_err(|e| format!("Failed to create temp file for input '{}': {}", name, e))?;
+        let temp_path = temp_file.path().to_path_buf();
         save_tensor_data(tensor_data, &temp_path)?;
         input_refs.push(TensorInput {
             name: name.clone(),
             path: temp_path.to_string_lossy().to_string(),
         });
+        temp_files.push(temp_file); // Keep file handle to prevent deletion
     }
 
     // Run inference using backend plugin
@@ -215,12 +216,16 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancelled_clone = Arc::clone(&cancelled);
     if let Some(handle) = cancel_handle {
-        ctrlc::set_handler(move || {
+        if let Err(e) = ctrlc::set_handler(move || {
             cancelled_clone.store(true, Ordering::SeqCst);
             eprintln!("\nCancelling...");
             let _ = handle.cancel();
-        })
-        .ok();
+        }) {
+            output::warning(&format!(
+                "Failed to set Ctrl+C handler: {}. Cancellation may not work.",
+                e
+            ));
+        }
     }
 
     // Compute cache key from snapshot content

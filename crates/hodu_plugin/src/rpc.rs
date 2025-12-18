@@ -46,12 +46,18 @@ impl std::fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
-/// Validate a path string (non-empty, no null bytes)
+/// Validate a path string (non-empty, no null bytes, not all whitespace)
 fn validate_path(path: &str, field: &str) -> Result<(), ValidationError> {
     if path.is_empty() {
         return Err(ValidationError {
             field: field.to_string(),
             message: "path cannot be empty".to_string(),
+        });
+    }
+    if path.chars().all(|c| c.is_whitespace()) {
+        return Err(ValidationError {
+            field: field.to_string(),
+            message: "path cannot be only whitespace".to_string(),
         });
     }
     if path.contains('\0') {
@@ -798,8 +804,25 @@ impl Request {
     }
 
     /// Check if this request has a valid method name
+    ///
+    /// Validates that the method name:
+    /// - Is not empty or whitespace-only
+    /// - Contains only valid characters (alphanumeric, '.', '_', '/', '$')
+    /// - Contains at least one alphanumeric character
     pub fn is_valid(&self) -> bool {
-        !self.method.is_empty() && !self.method.chars().all(|c| c.is_whitespace())
+        if self.method.is_empty() || self.method.chars().all(|c| c.is_whitespace()) {
+            return false;
+        }
+        // Method names should be alphanumeric with dots, underscores, slashes, and $ for internal methods
+        let valid_chars = self
+            .method
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '/' || c == '$');
+        if !valid_chars {
+            return false;
+        }
+        // Must contain at least one alphanumeric character
+        self.method.chars().any(|c| c.is_alphanumeric())
     }
 }
 
@@ -1028,9 +1051,14 @@ impl RpcError {
                 if let Some(obj) = data.as_object_mut() {
                     // Chain causes if already exists
                     if let Some(existing) = obj.get("cause") {
+                        // Extract string from existing cause, handling non-string values
+                        let existing_str = match existing {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
                         obj.insert(
                             "cause".to_string(),
-                            serde_json::json!(format!("{} <- {}", cause_str, existing)),
+                            serde_json::json!(format!("{} <- {}", cause_str, existing_str)),
                         );
                     } else {
                         obj.insert("cause".to_string(), serde_json::json!(cause_str));
@@ -1081,6 +1109,10 @@ impl RpcError {
                     if let Some(hints) = obj.get_mut("hints") {
                         if let Some(arr) = hints.as_array_mut() {
                             arr.push(serde_json::json!(hint_str));
+                        } else {
+                            // hints exists but is not an array - convert to array
+                            let existing = hints.take();
+                            *hints = serde_json::json!([existing, hint_str]);
                         }
                     } else {
                         obj.insert("hints".to_string(), serde_json::json!([hint_str]));

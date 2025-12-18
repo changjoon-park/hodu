@@ -39,6 +39,7 @@ serde_json = { version = "1.0.145" }
 serde_repr = "0.1.20"
 sha2 = "0.10.9"
 smallvec = { version = "1.15.1" }
+tempfile = "3.23"
 syn = { version = "2.0", features = ["full"] }
 tokio = { version = "1.48", features = ["rt", "sync", "io-util", "macros", "time"] }
 tokio-util = { version = "0.7.17" }

@@ -48,8 +48,8 @@ pub fn device_type(device: &str) -> Option<&str> {
     if device.is_empty() {
         return None;
     }
-    // split().next() always returns Some for non-empty string
-    Some(device.split("::").next().unwrap())
+    // split().next() always returns Some for non-empty string, but we avoid unwrap for cleaner code
+    device.split("::").next()
 }
 
 /// Error type for BuildTarget validation

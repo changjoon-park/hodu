@@ -114,3 +114,19 @@
 
 **Reliability:** (🟡 Important)
 - [x] Make backup restoration failure return error - `install.rs:500-506` now returns error instead of just warning, prevents broken state
+
+---
+
+## Newly Discovered Issues (6th Analysis)
+
+**Security:** (🔴 Critical)
+- [x] Use tempfile crate for secure temp files - `run.rs:199` now uses `NamedTempFile::with_prefix()` instead of PID+nanos pattern, eliminates race condition
+- [x] Use tempfile crate for temp directories - `install.rs:243` now uses `tempfile::TempDir` instead of custom `TempDirGuard`
+- [x] Use tempfile crate for convert temp files - `convert.rs:197` now uses `NamedTempFile::with_prefix()` for atomic creation
+
+**Validation:** (🟡 Important)
+- [x] Add output path validation - `build.rs:84-99` validates output path is not empty, not a directory, and parent directory exists
+
+**Error Handling:** (🟢 Nice-to-have)
+- [x] Log warning on Ctrl+C handler failure - `run.rs:229` now logs warning if `ctrlc::set_handler()` fails
+- [x] Log warning on backup removal failure - `install.rs:481-484` now logs warning if backup file removal fails

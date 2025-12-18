@@ -81,6 +81,19 @@ pub fn execute(args: BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("Model file not found: {}", model.display()).into());
     }
 
+    // Validate output path
+    if output.as_os_str().is_empty() {
+        return Err("Output path cannot be empty".into());
+    }
+    if output.is_dir() {
+        return Err(format!("Output path is a directory: {}", output.display()).into());
+    }
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(format!("Output directory does not exist: {}", parent.display()).into());
+        }
+    }
+
     let extension = model.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase());
 
     // Find model format plugin if needed

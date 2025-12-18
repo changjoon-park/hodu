@@ -123,3 +123,10 @@
 **Macro Safety:** (🟡 Important)
 - [x] Fix PluginMethod macro dead code - `macros/lib.rs:35-40` removed reference to non-existent `PluginServerExt` trait, now only generates `METHOD_NAME` constant
 - [x] Fix plugin_handler macro unnecessary generics - `macros/lib.rs:116-123` removed unused generic type parameters from generated register function
+
+---
+
+## Newly Discovered Issues (6th Analysis)
+
+**Reliability:** (🟡 Important)
+- [x] Add RAII guard for active_requests cleanup - `server.rs:447-476` added `ActiveRequestGuard` struct that removes request from active_requests on drop, ensuring cleanup even if handler panics

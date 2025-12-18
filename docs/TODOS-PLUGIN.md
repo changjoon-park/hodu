@@ -91,3 +91,18 @@
 - [x] Add validate() to ProgressParams - `rpc.rs:616-628` added validation for percent (0-100) and message
 - [x] Add validate() to LogParams - `rpc.rs:654-667` added validation for level and message
 - [x] Add validate() to TensorOutput - `rpc.rs:558-567` added validation matching TensorInput pattern
+
+---
+
+## Newly Discovered Issues (6th Analysis)
+
+**Bug Fix:** (🔴 Critical)
+- [x] Fix with_hint() non-array handling - `rpc.rs:1081-1088` now converts existing non-array hints value to array when adding new hint
+- [x] Fix with_cause() non-string cause handling - `rpc.rs:1030-1035` now properly extracts string from existing cause value before chaining
+
+**Validation:** (🟡 Important)
+- [x] Strengthen Request.is_valid() - `rpc.rs:812-826` now validates method name contains only valid chars (alphanumeric, '.', '_', '/', '$') and at least one alphanumeric
+- [x] Add whitespace-only check to validate_path - `rpc.rs:57-62` now rejects paths containing only whitespace
+
+**Code Quality:** (🟢 Nice-to-have)
+- [x] Remove unnecessary unwrap in device_type - `backend.rs:51-52` now returns `split().next()` directly without wrapping in Some+unwrap

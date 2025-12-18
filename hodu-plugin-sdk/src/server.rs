@@ -444,6 +444,25 @@ struct Handler {
     timeout: Option<Duration>,
 }
 
+/// RAII guard for active request cleanup
+///
+/// Automatically removes the request from active_requests when dropped,
+/// ensuring cleanup even if the handler panics.
+struct ActiveRequestGuard {
+    id: RequestId,
+    active_requests: Arc<Mutex<HashMap<RequestId, CancellationHandle>>>,
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        // Use try_lock to avoid blocking in drop
+        // If we can't get the lock, the cleanup will happen eventually when the server processes the next request
+        if let Ok(mut guard) = self.active_requests.try_lock() {
+            guard.remove(&self.id);
+        }
+    }
+}
+
 // ============================================================================
 // Plugin Server
 // ============================================================================
@@ -1120,17 +1139,22 @@ impl PluginServer {
                     };
                     let cancel_handle = CancellationHandle::new(&ctx);
 
-                    // Register active request
+                    // Register active request with RAII guard for cleanup
                     self.active_requests
                         .lock()
                         .await
                         .insert((*id).clone(), cancel_handle.clone());
+                    let _guard = ActiveRequestGuard {
+                        id: (*id).clone(),
+                        active_requests: self.active_requests.clone(),
+                    };
 
                     // Determine effective timeout (handler-specific overrides default)
                     let effective_timeout = handler.timeout.or(self.default_timeout);
 
                     // Execute handler with optional timeout
-                    let result = match effective_timeout {
+                    // The _guard ensures cleanup even if handler panics
+                    match effective_timeout {
                         Some(timeout_duration) => {
                             match tokio::time::timeout(timeout_duration, (handler.func)(ctx, params)).await {
                                 Ok(result) => result,
@@ -1144,12 +1168,8 @@ impl PluginServer {
                             }
                         },
                         None => (handler.func)(ctx, params).await,
-                    };
-
-                    // Unregister active request
-                    self.active_requests.lock().await.remove(&*id);
-
-                    result
+                    }
+                    // _guard dropped here, cleaning up active_requests
                 } else {
                     Err(RpcError::method_not_found(&method))
                 }

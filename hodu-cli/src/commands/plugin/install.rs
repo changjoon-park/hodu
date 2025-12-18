@@ -8,39 +8,11 @@ use crate::plugins::{
 use hodu_plugin::PLUGIN_VERSION;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tempfile::TempDir;
 use wait_timeout::ChildExt;
 
 /// Maximum manifest.json file size (1MB)
 const MAX_MANIFEST_SIZE: u64 = 1024 * 1024;
-
-/// RAII guard for temporary directories - ensures cleanup on drop
-struct TempDirGuard {
-    path: PathBuf,
-}
-
-impl TempDirGuard {
-    fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDirGuard {
-    fn drop(&mut self) {
-        if self.path.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&self.path) {
-                eprintln!(
-                    "Warning: Failed to remove temp directory {}: {}",
-                    self.path.display(),
-                    e
-                );
-            }
-        }
-    }
-}
 
 /// Parsed manifest info: (name, version, plugin_version, plugin_type, capabilities)
 type ManifestInfo = (String, String, String, PluginType, PluginCapabilities);
@@ -233,12 +205,9 @@ pub fn install_from_git(
     // Validate URL before cloning
     validate_git_url(url)?;
 
-    // Create temp directory with RAII cleanup (cleaned up automatically on drop, even on panic)
-    let temp_dir_path = std::env::temp_dir().join(format!("hodu_plugin_{}", std::process::id()));
-    if temp_dir_path.exists() {
-        std::fs::remove_dir_all(&temp_dir_path)?;
-    }
-    let temp_dir = TempDirGuard::new(temp_dir_path);
+    // Create temp directory with tempfile crate for secure, atomic creation
+    let temp_dir =
+        TempDir::with_prefix("hodu_plugin_").map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
     // Clone repository (quietly) with timeout
     let mut git_cmd = Command::new("git");
@@ -512,7 +481,12 @@ pub fn install_from_path(
 
     // Remove backup after successful copy
     if has_backup {
-        let _ = std::fs::remove_file(&backup_path);
+        if let Err(e) = std::fs::remove_file(&backup_path) {
+            output::warning(&format!(
+                "Failed to remove backup file: {}. You may want to delete it manually.",
+                e
+            ));
+        }
     }
 
     // Make executable on Unix
