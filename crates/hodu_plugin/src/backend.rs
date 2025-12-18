@@ -35,17 +35,21 @@ pub fn parse_device_id(device: &str) -> Option<usize> {
 /// Get device type from device string (e.g., "cuda::0" -> "cuda")
 ///
 /// Returns the device type portion before the `::` separator, or the entire
-/// string if no separator is present.
+/// string if no separator is present. Returns `None` for empty strings.
 ///
 /// # Examples
 /// ```
 /// use hodu_plugin::device_type;
-/// assert_eq!(device_type("cuda::0"), "cuda");
-/// assert_eq!(device_type("cpu"), "cpu");
+/// assert_eq!(device_type("cuda::0"), Some("cuda"));
+/// assert_eq!(device_type("cpu"), Some("cpu"));
+/// assert_eq!(device_type(""), None);
 /// ```
-pub fn device_type(device: &str) -> &str {
-    // split().next() always returns Some for non-empty iterator
-    device.split("::").next().unwrap()
+pub fn device_type(device: &str) -> Option<&str> {
+    if device.is_empty() {
+        return None;
+    }
+    // split().next() always returns Some for non-empty string
+    Some(device.split("::").next().unwrap())
 }
 
 /// Error type for BuildTarget validation
@@ -158,12 +162,14 @@ mod tests {
 
     #[test]
     fn test_device_type() {
-        assert_eq!(device_type("cuda::0"), "cuda");
-        assert_eq!(device_type("cuda::1"), "cuda");
-        assert_eq!(device_type("rocm::0"), "rocm");
-        assert_eq!(device_type("cpu"), "cpu");
-        assert_eq!(device_type("metal"), "metal");
-        assert_eq!(device_type("webgpu"), "webgpu");
+        assert_eq!(device_type("cuda::0"), Some("cuda"));
+        assert_eq!(device_type("cuda::1"), Some("cuda"));
+        assert_eq!(device_type("rocm::0"), Some("rocm"));
+        assert_eq!(device_type("cpu"), Some("cpu"));
+        assert_eq!(device_type("metal"), Some("metal"));
+        assert_eq!(device_type("webgpu"), Some("webgpu"));
+        // Empty string should return None
+        assert_eq!(device_type(""), None);
     }
 
     #[test]

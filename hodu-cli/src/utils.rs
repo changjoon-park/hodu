@@ -31,27 +31,36 @@ pub fn core_dtype_to_plugin(dtype: DType) -> PluginDType {
     }
 }
 
+/// Error for unknown DType conversion
+#[derive(Debug)]
+pub struct UnknownDTypeError(pub PluginDType);
+
+impl std::fmt::Display for UnknownDTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unknown PluginDType variant: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownDTypeError {}
+
 /// Convert hodu_plugin PluginDType to hodu_core DType
-pub fn plugin_dtype_to_core(dtype: PluginDType) -> DType {
+pub fn plugin_dtype_to_core(dtype: PluginDType) -> Result<DType, UnknownDTypeError> {
     match dtype {
-        PluginDType::BOOL => DType::BOOL,
-        PluginDType::F8E4M3 => DType::F8E4M3,
-        PluginDType::F8E5M2 => DType::F8E5M2,
-        PluginDType::BF16 => DType::BF16,
-        PluginDType::F16 => DType::F16,
-        PluginDType::F32 => DType::F32,
-        PluginDType::F64 => DType::F64,
-        PluginDType::U8 => DType::U8,
-        PluginDType::U16 => DType::U16,
-        PluginDType::U32 => DType::U32,
-        PluginDType::U64 => DType::U64,
-        PluginDType::I8 => DType::I8,
-        PluginDType::I16 => DType::I16,
-        PluginDType::I32 => DType::I32,
-        PluginDType::I64 => DType::I64,
-        _ => panic!(
-            "Unknown PluginDType variant: {:?}. Update plugin_dtype_to_core() to handle new dtypes.",
-            dtype
-        ),
+        PluginDType::BOOL => Ok(DType::BOOL),
+        PluginDType::F8E4M3 => Ok(DType::F8E4M3),
+        PluginDType::F8E5M2 => Ok(DType::F8E5M2),
+        PluginDType::BF16 => Ok(DType::BF16),
+        PluginDType::F16 => Ok(DType::F16),
+        PluginDType::F32 => Ok(DType::F32),
+        PluginDType::F64 => Ok(DType::F64),
+        PluginDType::U8 => Ok(DType::U8),
+        PluginDType::U16 => Ok(DType::U16),
+        PluginDType::U32 => Ok(DType::U32),
+        PluginDType::U64 => Ok(DType::U64),
+        PluginDType::I8 => Ok(DType::I8),
+        PluginDType::I16 => Ok(DType::I16),
+        PluginDType::I32 => Ok(DType::I32),
+        PluginDType::I64 => Ok(DType::I64),
+        _ => Err(UnknownDTypeError(dtype)),
     }
 }

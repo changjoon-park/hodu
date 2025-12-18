@@ -69,10 +69,12 @@ pub use hodu_plugin::{BuildTarget, Device, PluginDType, PluginError, PluginResul
 pub use hodu_plugin::{current_host_triple, device_type, parse_device_id};
 
 // Re-export tensor types with hodu_core extensions
-pub use tensor::{SdkDType, TensorDataExt};
+pub use tensor::{core_dtype_to_plugin, plugin_dtype_to_core, SdkDType, TensorDataExt, UnknownDTypeError};
 
 // Re-export notification helpers for convenience
-pub use server::{log_debug, log_error, log_info, log_warn, notify_log, notify_progress};
+pub use server::{
+    log_debug, log_error, log_info, log_warn, notify_log, notify_progress, try_notify_log, try_notify_progress,
+};
 
 // Re-export streaming support
 pub use server::StreamWriter;

@@ -27,7 +27,7 @@ pub fn load_tensor_data(path: impl AsRef<Path>) -> Result<TensorData, Box<dyn st
 /// Save tensor data to an HDT file
 pub fn save_tensor_data(tensor_data: &TensorData, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let shape = Shape::new(&tensor_data.shape);
-    let dtype = plugin_dtype_to_core(tensor_data.dtype);
+    let dtype = plugin_dtype_to_core(tensor_data.dtype)?;
     let tensor = Tensor::from_bytes(&tensor_data.data, shape, dtype, CoreDevice::CPU).map_err(|e| e.to_string())?;
     hdt::save(&tensor, path).map_err(|e| e.to_string())?;
     Ok(())

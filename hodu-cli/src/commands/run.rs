@@ -109,6 +109,16 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
             if plugin.is_none() {
                 return Err(friendly_format_error(ext, &registry).into());
             }
+            // Validate that the plugin has load_model capability
+            if let Some(p) = &plugin {
+                if !p.capabilities.load_model.unwrap_or(false) {
+                    return Err(format!(
+                        "Plugin '{}' doesn't support loading models (missing load_model capability)",
+                        p.name
+                    )
+                    .into());
+                }
+            }
             plugin
         },
         None => {
@@ -158,10 +168,14 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Load model (using format plugin if needed)
-    let model_name = args.model.file_name().unwrap_or_default().to_string_lossy();
+    let model_name = args
+        .model
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| args.model.display().to_string());
     let snapshot_path = if let Some(format_entry) = format_plugin {
         // Use format plugin to convert to snapshot
-        output::loading(&format!("{}", model_name));
+        output::loading(&model_name);
         let client = manager.get_plugin(&format_entry.name)?;
         let result = client.load_model(path_to_str(&args.model)?)?;
         PathBuf::from(result.snapshot_path)
@@ -177,9 +191,14 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     let inputs = parse_inputs(&all_inputs, &snapshot)?;
 
     // Save input tensors to temp files and create TensorInput refs
+    // Use PID + nanosecond timestamp for unpredictable temp filenames
     let mut input_refs = Vec::new();
     for (name, tensor_data) in &inputs {
-        let temp_path = std::env::temp_dir().join(format!("hodu_input_{}_{}.hdt", name, std::process::id()));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_path = std::env::temp_dir().join(format!("hodu_input_{}_{}_{}.hdt", name, std::process::id(), nanos));
         save_tensor_data(tensor_data, &temp_path)?;
         input_refs.push(TensorInput {
             name: name.clone(),
@@ -241,7 +260,7 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
             path_to_str(&library_path)?,
         )?;
     } else {
-        output::cached(&format!("{}", model_name));
+        output::cached(&model_name);
     }
 
     // Run with cached library
@@ -359,7 +378,7 @@ fn output_results(outputs: &HashMap<String, TensorData>, args: &RunArgs) -> Resu
             names.sort();
             for name in names {
                 let data = &outputs[name];
-                let dtype = plugin_dtype_to_core(data.dtype);
+                let dtype = plugin_dtype_to_core(data.dtype)?;
                 let shape = Shape::new(&data.shape);
                 let tensor = Tensor::from_bytes(&data.data, shape, dtype, CoreDevice::CPU)?;
                 // Colored ">" prefix, white name
@@ -377,6 +396,8 @@ fn output_results(outputs: &HashMap<String, TensorData>, args: &RunArgs) -> Resu
 }
 
 fn expand_path(path: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    use std::path::Component;
+
     // Expand ~ to home directory
     let expanded = if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
@@ -389,14 +410,25 @@ fn expand_path(path: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
     };
 
     // Canonicalize to resolve .. and symlinks, preventing path traversal
-    // If the file doesn't exist yet, just check for obvious traversal patterns
+    // If the file doesn't exist yet, check using path components
     if expanded.exists() {
         Ok(expanded.canonicalize()?)
     } else {
-        // For non-existent paths, check for suspicious patterns
-        let path_str = expanded.to_string_lossy();
-        if path_str.contains("..") {
-            return Err("Path traversal (.. sequences) not allowed".into());
+        // For non-existent paths, check using path components (stronger than string check)
+        for component in expanded.components() {
+            match component {
+                Component::ParentDir => {
+                    return Err("Path traversal (.. components) not allowed".into());
+                },
+                Component::Normal(s) => {
+                    // Check for null bytes and suspicious patterns
+                    let s_str = s.to_string_lossy();
+                    if s_str.contains('\0') {
+                        return Err("Path contains null byte".into());
+                    }
+                },
+                _ => {},
+            }
         }
         Ok(expanded)
     }

@@ -72,3 +72,23 @@
 **Missing Features:** (🟢 Nice-to-have)
 - [x] Add request size limit - `server.rs:46` added `MAX_REQUEST_SIZE` (1MB) with validation
 - [x] Add default request timeout - `server.rs:49` added `DEFAULT_REQUEST_TIMEOUT` (5 min) applied by default
+
+---
+
+## Newly Discovered Issues (3rd Analysis)
+
+**Panic Safety:** (🔴 Critical)
+- [x] Fix panic in `plugin_dtype_to_core()` - `tensor.rs:46` now returns `Result<DType, UnknownDTypeError>`
+- [x] Replace assert! with Result - `server.rs:849` collects errors and reports on `run()`, no panics
+
+**Validation:** (🟡 Important)
+- [x] Add batch size limit - `server.rs:48` added `MAX_BATCH_SIZE` (100) with error on excess
+- [x] Fix StreamWriter chunk_index consistency - verified: index incremented AFTER successful flush
+
+**Error Handling:** (🟡 Important)
+- [x] Make notification errors recoverable - `server.rs` added `try_notify_progress()` and `try_notify_log()` returning `Result<(), std::io::Error>`
+
+**Performance:** (🟢 Nice-to-have)
+- [x] Avoid double-parsing batch requests - `server.rs:989` now uses `handle_request_value()` with `from_value()`
+- [x] Reduce RequestId cloning - `server.rs:1046` uses `Arc<RequestId>` and `Arc::unwrap_or_clone()` for final response
+- [x] Warn on duplicate handler registration - `server.rs:864` now logs warning when overwriting

@@ -177,7 +177,7 @@ fn convert_tensor(
         },
         "json" => {
             let shape = Shape::new(&tensor_data.shape);
-            let dtype = plugin_dtype_to_core(tensor_data.dtype);
+            let dtype = plugin_dtype_to_core(tensor_data.dtype)?;
             let tensor =
                 Tensor::from_bytes(&tensor_data.data, shape, dtype, CoreDevice::CPU).map_err(|e| e.to_string())?;
             json::save(&tensor, &args.output).map_err(|e| e.to_string())?;

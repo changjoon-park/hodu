@@ -207,6 +207,13 @@ fn validate_git_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
+    // Warn about insecure protocols (unencrypted)
+    if url.starts_with("http://") {
+        eprintln!("Warning: Using insecure HTTP protocol. Consider using HTTPS instead.");
+    } else if url.starts_with("git://") {
+        eprintln!("Warning: Using insecure git:// protocol (unencrypted). Consider using HTTPS or SSH.");
+    }
+
     // Check for suspicious patterns
     if url.contains("..") || url.contains('\0') {
         return Err("Git URL contains suspicious characters".into());
@@ -290,6 +297,16 @@ pub fn install_from_path(
     let cargo_toml = path.join("Cargo.toml");
     if !cargo_toml.exists() {
         return Err(format!("No Cargo.toml found at {}", path.display()).into());
+    }
+
+    // Check Cargo.toml size before reading (reuse manifest size limit)
+    let cargo_size = std::fs::metadata(&cargo_toml)?.len();
+    if cargo_size > MAX_MANIFEST_SIZE {
+        return Err(format!(
+            "Cargo.toml too large: {} bytes (max: {} bytes)",
+            cargo_size, MAX_MANIFEST_SIZE
+        )
+        .into());
     }
 
     // Parse Cargo.toml to get the package name

@@ -11,6 +11,70 @@ pub const JSONRPC_VERSION: &str = "2.0";
 pub const PROTOCOL_VERSION: &str = "1.0.0";
 
 // ============================================================================
+// Validation Helpers
+// ============================================================================
+
+/// Maximum number of capabilities a plugin can declare
+pub const MAX_CAPABILITIES: usize = 50;
+
+/// Maximum number of extensions (model or tensor) a plugin can support
+pub const MAX_EXTENSIONS: usize = 100;
+
+/// Maximum number of devices a plugin can support
+pub const MAX_DEVICES: usize = 100;
+
+/// Maximum number of supported targets in metadata
+pub const MAX_SUPPORTED_TARGETS: usize = 50;
+
+/// Maximum number of inputs in a RunParams request
+pub const MAX_INPUTS: usize = 1000;
+
+/// Error type for parameter validation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationError {
+    /// Field that failed validation
+    pub field: String,
+    /// Description of the validation failure
+    pub message: String,
+}
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.field, self.message)
+    }
+}
+
+impl std::error::Error for ValidationError {}
+
+/// Validate a path string (non-empty, no null bytes)
+fn validate_path(path: &str, field: &str) -> Result<(), ValidationError> {
+    if path.is_empty() {
+        return Err(ValidationError {
+            field: field.to_string(),
+            message: "path cannot be empty".to_string(),
+        });
+    }
+    if path.contains('\0') {
+        return Err(ValidationError {
+            field: field.to_string(),
+            message: "path contains null byte".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Validate a non-empty string field
+fn validate_non_empty(value: &str, field: &str) -> Result<(), ValidationError> {
+    if value.is_empty() {
+        return Err(ValidationError {
+            field: field.to_string(),
+            message: "cannot be empty".to_string(),
+        });
+    }
+    Ok(())
+}
+
+// ============================================================================
 // Core JSON-RPC Types
 // ============================================================================
 
@@ -233,6 +297,91 @@ pub struct InitializeResult {
     pub metadata: Option<PluginMetadataRpc>,
 }
 
+impl InitializeResult {
+    /// Check if collection sizes are within limits
+    pub fn is_within_limits(&self) -> bool {
+        if self.capabilities.len() > MAX_CAPABILITIES {
+            return false;
+        }
+        if let Some(ref exts) = self.model_extensions {
+            if exts.len() > MAX_EXTENSIONS {
+                return false;
+            }
+        }
+        if let Some(ref exts) = self.tensor_extensions {
+            if exts.len() > MAX_EXTENSIONS {
+                return false;
+            }
+        }
+        if let Some(ref devices) = self.devices {
+            if devices.len() > MAX_DEVICES {
+                return false;
+            }
+        }
+        if let Some(ref meta) = self.metadata {
+            if let Some(ref targets) = meta.supported_targets {
+                if targets.len() > MAX_SUPPORTED_TARGETS {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Validate collection sizes
+    pub fn validate_limits(&self) -> Result<(), ValidationError> {
+        if self.capabilities.len() > MAX_CAPABILITIES {
+            return Err(ValidationError {
+                field: "capabilities".to_string(),
+                message: format!(
+                    "too many capabilities ({} > {})",
+                    self.capabilities.len(),
+                    MAX_CAPABILITIES
+                ),
+            });
+        }
+        if let Some(ref exts) = self.model_extensions {
+            if exts.len() > MAX_EXTENSIONS {
+                return Err(ValidationError {
+                    field: "model_extensions".to_string(),
+                    message: format!("too many extensions ({} > {})", exts.len(), MAX_EXTENSIONS),
+                });
+            }
+        }
+        if let Some(ref exts) = self.tensor_extensions {
+            if exts.len() > MAX_EXTENSIONS {
+                return Err(ValidationError {
+                    field: "tensor_extensions".to_string(),
+                    message: format!("too many extensions ({} > {})", exts.len(), MAX_EXTENSIONS),
+                });
+            }
+        }
+        if let Some(ref devices) = self.devices {
+            if devices.len() > MAX_DEVICES {
+                return Err(ValidationError {
+                    field: "devices".to_string(),
+                    message: format!("too many devices ({} > {})", devices.len(), MAX_DEVICES),
+                });
+            }
+        }
+        if let Some(ref meta) = self.metadata {
+            if let Some(ref targets) = meta.supported_targets {
+                if targets.len() > MAX_SUPPORTED_TARGETS {
+                    return Err(ValidationError {
+                        field: "metadata.supported_targets".to_string(),
+                        message: format!(
+                            "too many supported targets ({} > {})",
+                            targets.len(),
+                            MAX_SUPPORTED_TARGETS
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Load model request params
 ///
 /// Request to load a model file and convert it to hodu snapshot format.
@@ -240,6 +389,13 @@ pub struct InitializeResult {
 pub struct LoadModelParams {
     /// Path to the input model file
     pub path: String,
+}
+
+impl LoadModelParams {
+    /// Validate the parameters
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        validate_path(&self.path, "path")
+    }
 }
 
 /// Load model response result
@@ -260,6 +416,14 @@ pub struct SaveModelParams {
     pub output_path: String,
 }
 
+impl SaveModelParams {
+    /// Validate the parameters
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        validate_path(&self.snapshot_path, "snapshot_path")?;
+        validate_path(&self.output_path, "output_path")
+    }
+}
+
 /// Load tensor request params
 ///
 /// Request to load a tensor file and convert to hodu tensor format.
@@ -267,6 +431,13 @@ pub struct SaveModelParams {
 pub struct LoadTensorParams {
     /// Path to the input tensor file
     pub path: String,
+}
+
+impl LoadTensorParams {
+    /// Validate the parameters
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        validate_path(&self.path, "path")
+    }
 }
 
 /// Load tensor response result
@@ -287,6 +458,14 @@ pub struct SaveTensorParams {
     pub output_path: String,
 }
 
+impl SaveTensorParams {
+    /// Validate the parameters
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        validate_path(&self.tensor_path, "tensor_path")?;
+        validate_path(&self.output_path, "output_path")
+    }
+}
+
 /// Backend run request params
 ///
 /// Request to execute model inference on a compiled library.
@@ -302,6 +481,28 @@ pub struct RunParams {
     pub inputs: Vec<TensorInput>,
 }
 
+impl RunParams {
+    /// Validate the parameters
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        validate_path(&self.library_path, "library_path")?;
+        validate_path(&self.snapshot_path, "snapshot_path")?;
+        validate_non_empty(&self.device, "device")?;
+        if self.inputs.len() > MAX_INPUTS {
+            return Err(ValidationError {
+                field: "inputs".to_string(),
+                message: format!("too many inputs ({} > {})", self.inputs.len(), MAX_INPUTS),
+            });
+        }
+        for (i, input) in self.inputs.iter().enumerate() {
+            input.validate().map_err(|mut e| {
+                e.field = format!("inputs[{}].{}", i, e.field);
+                e
+            })?;
+        }
+        Ok(())
+    }
+}
+
 /// Input tensor reference for model execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TensorInput {
@@ -309,6 +510,35 @@ pub struct TensorInput {
     pub name: String,
     /// Path to tensor file (.hdt)
     pub path: String,
+}
+
+impl TensorInput {
+    /// Create new tensor input
+    pub fn new(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+        }
+    }
+
+    /// Validate tensor name (non-empty, no control chars, no path separators)
+    pub fn is_valid_name(&self) -> bool {
+        !self.name.is_empty()
+            && !self.name.chars().any(|c| c.is_control())
+            && !self.name.contains('/')
+            && !self.name.contains('\\')
+    }
+
+    /// Validate the tensor input
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if !self.is_valid_name() {
+            return Err(ValidationError {
+                field: "name".to_string(),
+                message: "invalid tensor name (empty, contains control chars, or path separators)".to_string(),
+            });
+        }
+        validate_path(&self.path, "path")
+    }
 }
 
 /// Backend run response result
@@ -327,6 +557,24 @@ pub struct TensorOutput {
     pub path: String,
 }
 
+impl TensorOutput {
+    /// Create new tensor output
+    pub fn new(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+        }
+    }
+
+    /// Validate tensor name (non-empty, no control chars, no path separators)
+    pub fn is_valid_name(&self) -> bool {
+        !self.name.is_empty()
+            && !self.name.chars().any(|c| c.is_control())
+            && !self.name.contains('/')
+            && !self.name.contains('\\')
+    }
+}
+
 /// Backend build request params
 ///
 /// Request to AOT compile a model for a specific target.
@@ -342,6 +590,17 @@ pub struct BuildParams {
     pub format: String,
     /// Path for the compiled output
     pub output_path: String,
+}
+
+impl BuildParams {
+    /// Validate the parameters
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        validate_path(&self.snapshot_path, "snapshot_path")?;
+        validate_non_empty(&self.target, "target")?;
+        validate_non_empty(&self.device, "device")?;
+        validate_non_empty(&self.format, "format")?;
+        validate_path(&self.output_path, "output_path")
+    }
 }
 
 /// Backend list targets response result
@@ -365,6 +624,9 @@ pub struct ProgressParams {
     pub message: String,
 }
 
+/// Valid log levels for LogParams
+pub const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
+
 /// Log notification params (plugin -> CLI)
 ///
 /// Sent by plugins to emit log messages to the CLI.
@@ -374,6 +636,30 @@ pub struct LogParams {
     pub level: String,
     /// Log message content
     pub message: String,
+}
+
+impl LogParams {
+    /// Create new log params with validation
+    pub fn new(level: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            level: level.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Check if the log level is valid
+    pub fn is_valid_level(&self) -> bool {
+        VALID_LOG_LEVELS.contains(&self.level.as_str())
+    }
+
+    /// Get the normalized log level (returns "info" for invalid levels)
+    pub fn normalized_level(&self) -> &str {
+        if self.is_valid_level() {
+            &self.level
+        } else {
+            "info"
+        }
+    }
 }
 
 /// Cancel request params (CLI -> plugin)
@@ -653,6 +939,35 @@ impl RpcError {
     /// Create a cancelled error (-32007) - request was cancelled
     pub fn cancelled() -> Self {
         Self::new(error_codes::REQUEST_CANCELLED, "Request cancelled")
+    }
+
+    /// Create a device not available error (-32004)
+    pub fn device_not_available(device: impl Into<String>) -> Self {
+        let device = device.into();
+        Self::new(
+            error_codes::DEVICE_NOT_AVAILABLE,
+            format!("Device not available: {}", device),
+        )
+    }
+
+    /// Create a model error (-32005) - error loading or processing model
+    pub fn model_error(msg: impl Into<String>) -> Self {
+        Self::new(error_codes::MODEL_ERROR, msg)
+    }
+
+    /// Create a tensor error (-32006) - error loading or processing tensor
+    pub fn tensor_error(msg: impl Into<String>) -> Self {
+        Self::new(error_codes::TENSOR_ERROR, msg)
+    }
+
+    /// Create a generic plugin error (-32000)
+    pub fn plugin_error(msg: impl Into<String>) -> Self {
+        Self::new(error_codes::PLUGIN_ERROR, msg)
+    }
+
+    /// Create an invalid format error (-32003)
+    pub fn invalid_format(msg: impl Into<String>) -> Self {
+        Self::new(error_codes::INVALID_FORMAT, msg)
     }
 
     // =========================================================================

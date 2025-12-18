@@ -55,3 +55,17 @@
 - [x] Document parse_device_id - `backend.rs:14` added doc comment with examples
 - [x] Document device_type - `backend.rs:35` added doc comment with examples
 - [x] Document BuildTarget fields - `backend.rs:76-80` fields now have doc comments
+
+---
+
+## Newly Discovered Issues (3rd Analysis)
+
+**Validation:** (🟡 Important)
+- [x] Validate empty device string - `backend.rs:47` `device_type()` now returns `Option<&str>`, `None` for empty
+- [x] Add parameter struct validation - `rpc.rs` added `validate()` methods to LoadModelParams, SaveModelParams, LoadTensorParams, SaveTensorParams, RunParams, BuildParams, TensorInput with `ValidationError` type
+- [x] Limit collection sizes - `rpc.rs` added `MAX_*` constants and `validate_limits()` / `is_within_limits()` methods to InitializeResult
+
+**API Consistency:** (🟢 Nice-to-have)
+- [x] Add missing error factories - `rpc.rs:658-682` added `device_not_available()`, `model_error()`, `tensor_error()`, `plugin_error()`, `invalid_format()`
+- [x] Validate LogParams level - `rpc.rs:382` added `is_valid_level()`, `normalized_level()`, and `VALID_LOG_LEVELS`
+- [x] Validate TensorInput/Output names - `rpc.rs:314,348` added `is_valid_name()` methods

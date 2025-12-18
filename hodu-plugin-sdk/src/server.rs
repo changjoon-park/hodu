@@ -45,6 +45,9 @@ use tokio::sync::Mutex;
 /// Maximum allowed request size (1MB)
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 
+/// Maximum allowed batch request count (prevents DoS)
+const MAX_BATCH_SIZE: usize = 100;
+
 /// Default request timeout (5 minutes)
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -185,34 +188,50 @@ impl DebugOptions {
 // Notification helpers (can be called from handlers)
 // ============================================================================
 
-/// Send a progress notification to the CLI
+/// Send a progress notification to the CLI (fire-and-forget)
 ///
 /// # Arguments
 /// * `percent` - Progress percentage (0-100), None for indeterminate. Values > 100 are clamped to 100.
 /// * `message` - Progress message
 pub fn notify_progress(percent: Option<u8>, message: &str) {
+    if let Err(e) = try_notify_progress(percent, message) {
+        eprintln!("Warning: Failed to send progress notification: {}", e);
+    }
+}
+
+/// Send a progress notification to the CLI with error handling
+///
+/// Returns an error if the notification fails to send, allowing the caller to handle it.
+pub fn try_notify_progress(percent: Option<u8>, message: &str) -> Result<(), std::io::Error> {
+    use std::io::Write;
     // Clamp percent to 0-100
     let percent = percent.map(|p| p.min(100));
     let notification = Notification::progress(percent, message);
-    if let Ok(json) = serde_json::to_string(&notification) {
-        if writeln!(std::io::stdout(), "{}", json).is_err() {
-            eprintln!("Warning: Failed to send progress notification");
-        }
-        if std::io::stdout().flush().is_err() {
-            eprintln!("Warning: Failed to flush progress notification");
-        }
-    }
+    let json =
+        serde_json::to_string(&notification).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    writeln!(std::io::stdout(), "{}", json)?;
+    std::io::stdout().flush()
 }
 
 /// Valid log levels
 const VALID_LOG_LEVELS: &[&str] = &["error", "warn", "info", "debug", "trace"];
 
-/// Send a log notification to the CLI
+/// Send a log notification to the CLI (fire-and-forget)
 ///
 /// # Arguments
 /// * `level` - Log level: "error", "warn", "info", "debug", "trace". Invalid levels default to "info".
 /// * `message` - Log message
 pub fn notify_log(level: &str, message: &str) {
+    if let Err(e) = try_notify_log(level, message) {
+        eprintln!("Warning: Failed to send log notification: {}", e);
+    }
+}
+
+/// Send a log notification to the CLI with error handling
+///
+/// Returns an error if the notification fails to send, allowing the caller to handle it.
+pub fn try_notify_log(level: &str, message: &str) -> Result<(), std::io::Error> {
+    use std::io::Write;
     // Validate log level, default to "info" if invalid
     let level = if VALID_LOG_LEVELS.contains(&level) {
         level
@@ -220,14 +239,10 @@ pub fn notify_log(level: &str, message: &str) {
         "info"
     };
     let notification = Notification::log(level, message);
-    if let Ok(json) = serde_json::to_string(&notification) {
-        if writeln!(std::io::stdout(), "{}", json).is_err() {
-            eprintln!("Warning: Failed to send log notification");
-        }
-        if std::io::stdout().flush().is_err() {
-            eprintln!("Warning: Failed to flush log notification");
-        }
-    }
+    let json =
+        serde_json::to_string(&notification).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    writeln!(std::io::stdout(), "{}", json)?;
+    std::io::stdout().flush()
 }
 
 /// Convenience functions for different log levels
@@ -487,6 +502,8 @@ pub struct PluginServer {
     post_request_hook: Option<PostRequestHook>,
     /// Debug/profiling options
     debug_options: DebugOptions,
+    /// Build-time validation errors (reported on run())
+    build_errors: Vec<String>,
 }
 
 impl PluginServer {
@@ -509,6 +526,7 @@ impl PluginServer {
             pre_request_hook: None,
             post_request_hook: None,
             debug_options: DebugOptions::default(),
+            build_errors: Vec::new(),
         }
     }
 
@@ -838,24 +856,32 @@ impl PluginServer {
 
     /// Internal helper to register a handler with capability tracking
     ///
-    /// # Panics
-    /// Panics if the method name:
-    /// - Is empty
-    /// - Contains control characters
-    /// - Uses a reserved prefix (`$/`, `rpc.`, `system.`)
+    /// Validation errors are collected and reported when `run()` is called.
+    /// Invalid handler names include:
+    /// - Empty names
+    /// - Names containing control characters
+    /// - Names using reserved prefixes (`$/`, `rpc.`, `system.`)
     fn register_handler(mut self, name: &str, func: BoxedHandlerFn, timeout: Option<Duration>) -> Self {
-        // Validate handler name
-        assert!(!name.is_empty(), "Handler name cannot be empty");
-        assert!(
-            !name.chars().any(|c| c.is_control()),
-            "Handler name '{}' contains control characters",
-            name
-        );
-        assert!(
-            !RESERVED_PREFIXES.iter().any(|p| name.starts_with(p)),
-            "Handler name '{}' uses reserved prefix",
-            name
-        );
+        // Validate handler name - collect errors for reporting at run()
+        if name.is_empty() {
+            self.build_errors.push("Handler name cannot be empty".to_string());
+            return self;
+        }
+        if name.chars().any(|c| c.is_control()) {
+            self.build_errors
+                .push(format!("Handler name '{}' contains control characters", name));
+            return self;
+        }
+        if RESERVED_PREFIXES.iter().any(|p| name.starts_with(p)) {
+            self.build_errors
+                .push(format!("Handler name '{}' uses reserved prefix", name));
+            return self;
+        }
+
+        // Warn on duplicate handler registration
+        if self.handlers.contains_key(name) {
+            eprintln!("Warning: Handler '{}' is being overwritten", name);
+        }
 
         // Auto-register capability for format/backend methods
         if (name.starts_with("format.") || name.starts_with("backend."))
@@ -871,7 +897,17 @@ impl PluginServer {
     ///
     /// Starts the JSON-RPC server loop, reading from stdin and writing to stdout.
     /// Supports cancellation via `$/cancel` requests and batch requests per JSON-RPC 2.0 spec.
+    ///
+    /// # Errors
+    /// Returns error if there were validation errors during server construction
+    /// (e.g., invalid handler names).
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Check for build-time validation errors
+        if !self.build_errors.is_empty() {
+            let errors = self.build_errors.join("; ");
+            return Err(format!("Plugin server configuration errors: {}", errors).into());
+        }
+
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout();
         let reader = BufReader::new(stdin.lock());
@@ -942,14 +978,47 @@ impl PluginServer {
             )];
         }
 
+        // Check batch size limit to prevent DoS
+        if requests.len() > MAX_BATCH_SIZE {
+            return vec![Response::error(
+                RequestId::Number(0),
+                RpcError::invalid_request(format!(
+                    "Batch too large: {} requests (max: {})",
+                    requests.len(),
+                    MAX_BATCH_SIZE
+                )),
+            )];
+        }
+
         let mut responses = Vec::new();
         for req_value in requests {
-            let req_str = req_value.to_string();
-            if let Some(resp) = self.handle_message(&req_str).await {
+            // Convert Value directly to Request (avoids double-parsing)
+            if let Some(resp) = self.handle_request_value(req_value).await {
                 responses.push(resp);
             }
         }
         responses
+    }
+
+    /// Handle a pre-parsed JSON value (used by batch handler to avoid double-parsing)
+    async fn handle_request_value(&mut self, value: serde_json::Value) -> Option<Response> {
+        // Debug: log raw request
+        if self.debug_options.log_requests {
+            eprintln!("[DEBUG] Request: {}", value);
+        }
+
+        // Parse request from Value directly
+        let request: Request = match serde_json::from_value(value) {
+            Ok(req) => req,
+            Err(e) => {
+                return Some(Response::error(
+                    RequestId::Number(0),
+                    RpcError::parse_error(e.to_string()),
+                ));
+            },
+        };
+
+        self.handle_request(request).await
     }
 
     async fn handle_message(&mut self, line: &str) -> Option<Response> {
@@ -969,7 +1038,14 @@ impl PluginServer {
             },
         };
 
+        self.handle_request(request).await
+    }
+
+    /// Core request handling logic (used by both handle_message and handle_request_value)
+    async fn handle_request(&mut self, request: Request) -> Option<Response> {
         let Request { id, method, params, .. } = request;
+        // Wrap id in Arc to reduce cloning cost (especially for String IDs)
+        let id = Arc::new(id);
         let start_time = std::time::Instant::now();
 
         // Debug: log parsed request info
@@ -985,7 +1061,7 @@ impl PluginServer {
             if let Some(ref hook) = self.pre_request_hook {
                 let request_info = RequestInfo {
                     method: method.clone(),
-                    id: id.clone(),
+                    id: (*id).clone(),
                     params: params.clone(),
                 };
                 if let PreRequestAction::Reject(error) = hook(&request_info) {
@@ -993,13 +1069,13 @@ impl PluginServer {
                     if let Some(ref post_hook) = self.post_request_hook {
                         post_hook(&ResponseInfo {
                             method,
-                            id: id.clone(),
+                            id: (*id).clone(),
                             success: false,
                             error_code: Some(error.code),
                             duration: start_time.elapsed(),
                         });
                     }
-                    return Some(Response::error(id, error));
+                    return Some(Response::error(Arc::unwrap_or_clone(id), error));
                 }
             }
         }
@@ -1028,8 +1104,8 @@ impl PluginServer {
                 } else if let Some(handler) = self.handlers.get(&method) {
                     // Create context with cancellation token and shared state
                     let ctx = match &self.state {
-                        Some(state) => Context::with_state_dyn(id.clone(), state.clone()),
-                        None => Context::new(id.clone()),
+                        Some(state) => Context::with_state_dyn((*id).clone(), state.clone()),
+                        None => Context::new((*id).clone()),
                     };
                     let cancel_handle = CancellationHandle::new(&ctx);
 
@@ -1037,7 +1113,7 @@ impl PluginServer {
                     self.active_requests
                         .lock()
                         .await
-                        .insert(id.clone(), cancel_handle.clone());
+                        .insert((*id).clone(), cancel_handle.clone());
 
                     // Determine effective timeout (handler-specific overrides default)
                     let effective_timeout = handler.timeout.or(self.default_timeout);
@@ -1060,7 +1136,7 @@ impl PluginServer {
                     };
 
                     // Unregister active request
-                    self.active_requests.lock().await.remove(&id);
+                    self.active_requests.lock().await.remove(&*id);
 
                     result
                 } else {
@@ -1082,7 +1158,7 @@ impl PluginServer {
             if let Some(ref hook) = self.post_request_hook {
                 hook(&ResponseInfo {
                     method,
-                    id: id.clone(),
+                    id: (*id).clone(),
                     success: result.is_ok(),
                     error_code: result.as_ref().err().map(|e| e.code),
                     duration,
@@ -1090,6 +1166,8 @@ impl PluginServer {
             }
         }
 
+        // Unwrap Arc for final response (no more clones needed)
+        let id = Arc::unwrap_or_clone(id);
         let response = match result {
             Ok(value) => Response::success(id, value),
             Err(error) => Response::error(id, error),

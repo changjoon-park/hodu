@@ -63,3 +63,23 @@
 **Reliability:** (🟢 Nice-to-have)
 - [x] Add plugin update rollback - `plugin/install.rs:452` backs up binary before reinstall, restores on failure
 - [x] Limit process spawning - `plugins/process.rs:17` added `MAX_PLUGIN_PROCESSES` (16) with `TooManyProcesses` error
+
+---
+
+## Newly Discovered Issues (3rd Analysis)
+
+**Panic Safety:** (🔴 Critical)
+- [x] Fix panic in `plugin_dtype_to_core()` - `utils.rs:52` now returns `Result<DType, UnknownDTypeError>`
+
+**Security:** (🔴 Critical)
+- [x] Validate output tensor names - `saver.rs:11` added `validate_output_name()` with path separator check
+- [x] Use secure temp files - `run.rs:182` now uses PID + nanosecond timestamp for unpredictability
+
+**Validation:** (🟡 Important)
+- [x] Validate plugin capability before use - `run.rs:112` now checks `load_model` capability before use
+- [x] Limit Cargo.toml size - `install.rs:295` added size check using `MAX_MANIFEST_SIZE`
+- [x] Strengthen expand_path() - `run.rs:389` now uses `Path::components()` for robust traversal detection
+
+**Error Handling:** (🟢 Nice-to-have)
+- [x] Improve empty filename fallback - `run.rs:171` now falls back to full path display
+- [x] Warn on insecure git protocols - `install.rs:210` warns for `http://` and `git://` protocols
