@@ -212,3 +212,26 @@
 
 **Macro Safety:** (🟡 Important)
 - [x] Fix macro attribute parsing error handling - `macros/lib.rs:34-91` now returns proper compile errors for malformed `#[method(...)]` attributes instead of silently falling back to snake_case
+
+---
+
+## Newly Discovered Issues (12th Analysis)
+
+**Resource Management:** (🟡 Important)
+- [x] Fix ActiveRequestGuard silent cleanup failure - `server.rs:534-570` now uses stale_request_ids for deferred cleanup
+- [x] Fix StreamWriter chunk_index not rolled back on error - verified: index only increments after successful write/flush
+- [ ] Add error response size validation - `server.rs:1087-1098` error response itself could exceed MAX_RESPONSE_SIZE
+
+**Performance:** (🟡 Important)
+- [x] Fix batch request double JSON parsing - already uses handle_request_value() with from_value()
+
+**Validation:** (🟡 Important)
+- [x] Add method name validation in macro - `macros/lib.rs:48-69` now validates method names (empty, control chars, reserved prefixes)
+- [ ] Add handler type validation at registration - `server.rs:933-950` no compile-time check for P: DeserializeOwned
+
+**Testing:** (🟡 Important)
+- [ ] Add cancellation token support to MockClient - `testing.rs:54-110` no way to test cancellation-aware handlers
+
+**Documentation:** (🟢 Nice-to-have)
+- [ ] Document context.state() Arc cloning behavior - `context.rs:80-93` returns cloned Arc, not reference
+- [ ] Improve batch duplicate ID warning determinism - `server.rs:1166-1175` HashSet order is non-deterministic

@@ -534,6 +534,7 @@ struct Handler {
 struct ActiveRequestGuard {
     id: RequestId,
     active_requests: Arc<Mutex<HashMap<RequestId, CancellationHandle>>>,
+    stale_ids: Arc<std::sync::Mutex<Vec<RequestId>>>,
 }
 
 impl Drop for ActiveRequestGuard {
@@ -543,12 +544,24 @@ impl Drop for ActiveRequestGuard {
         match self.active_requests.try_lock() {
             Ok(mut guard) => {
                 guard.remove(&self.id);
+                // Also clean up any stale entries from previous failed cleanups
+                if let Ok(mut stale) = self.stale_ids.try_lock() {
+                    for stale_id in stale.drain(..) {
+                        guard.remove(&stale_id);
+                    }
+                }
             },
             Err(_) => {
-                // Lock contention is rare and bounded - the entry will be cleaned up
-                // when the request completes. Log warning since this could affect cancellation.
-                eprintln!(
-                    "Warning: Failed to cleanup active_request for {:?} (lock contention)",
+                // Lock contention - store ID for later cleanup
+                if let Ok(mut stale) = self.stale_ids.try_lock() {
+                    stale.push(self.id.clone());
+                    // Limit stale entries to prevent unbounded growth
+                    if stale.len() > 100 {
+                        stale.remove(0);
+                    }
+                }
+                log::warn!(
+                    "Failed to cleanup active_request for {:?} (lock contention, queued for later)",
                     self.id
                 );
             },
@@ -618,6 +631,8 @@ pub struct PluginServer {
     initialized: bool,
     /// Active requests that can be cancelled
     active_requests: Arc<Mutex<HashMap<RequestId, CancellationHandle>>>,
+    /// Stale request IDs that failed to cleanup (for deferred cleanup)
+    stale_request_ids: Arc<std::sync::Mutex<Vec<RequestId>>>,
     /// Plugin metadata
     metadata: PluginMetadata,
     /// Shutdown cleanup callback
@@ -651,6 +666,7 @@ impl PluginServer {
             handlers: HashMap::new(),
             initialized: false,
             active_requests: Arc::new(Mutex::new(HashMap::new())),
+            stale_request_ids: Arc::new(std::sync::Mutex::new(Vec::new())),
             metadata: PluginMetadata::default(),
             shutdown_callback: None,
             state: None,
@@ -1302,6 +1318,7 @@ impl PluginServer {
                     let _guard = ActiveRequestGuard {
                         id: request_id,
                         active_requests: self.active_requests.clone(),
+                        stale_ids: self.stale_request_ids.clone(),
                     };
 
                     // Determine effective timeout (handler-specific overrides default)

@@ -45,6 +45,29 @@ pub fn derive_plugin_method(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Reserved method name prefixes that plugins cannot use
+const RESERVED_PREFIXES: &[&str] = &["$/", "rpc.", "system."];
+
+/// Validate a method name, returning an error message if invalid
+fn validate_method_name(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("method name cannot be empty");
+    }
+    if name.chars().any(|c| c.is_control()) {
+        return Some("method name cannot contain control characters");
+    }
+    for prefix in RESERVED_PREFIXES {
+        if name.starts_with(prefix) {
+            return Some("method name uses reserved prefix ($/*, rpc.*, system.*)");
+        }
+    }
+    // Method names should contain at least one alphanumeric character
+    if !name.chars().any(|c| c.is_alphanumeric()) {
+        return Some("method name must contain at least one alphanumeric character");
+    }
+    None
+}
+
 fn extract_method_name(input: &DeriveInput) -> Result<String, syn::Error> {
     for attr in &input.attrs {
         if attr.path().is_ident("method") {
@@ -58,7 +81,11 @@ fn extract_method_name(input: &DeriveInput) -> Result<String, syn::Error> {
                             ..
                         }) = &nv.value
                         {
-                            return Ok(lit_str.value());
+                            let name = lit_str.value();
+                            if let Some(err) = validate_method_name(&name) {
+                                return Err(syn::Error::new_spanned(lit_str, err));
+                            }
+                            return Ok(name);
                         }
                         return Err(syn::Error::new_spanned(
                             &nv.value,
@@ -72,7 +99,11 @@ fn extract_method_name(input: &DeriveInput) -> Result<String, syn::Error> {
                 }
                 // Also try parsing as just a string literal: #[method("name")]
                 if let Ok(lit_str) = syn::parse2::<syn::LitStr>(meta.tokens.clone()) {
-                    return Ok(lit_str.value());
+                    let name = lit_str.value();
+                    if let Some(err) = validate_method_name(&name) {
+                        return Err(syn::Error::new_spanned(&lit_str, err));
+                    }
+                    return Ok(name);
                 }
                 // Attribute present but couldn't parse
                 return Err(syn::Error::new_spanned(

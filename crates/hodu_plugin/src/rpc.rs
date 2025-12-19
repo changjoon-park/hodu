@@ -75,6 +75,19 @@ fn truncate_utf8_owned(s: String, max_bytes: usize) -> String {
     s[..end].to_string()
 }
 
+/// Truncate string slice to at most `max_bytes`, respecting UTF-8 boundaries.
+/// Returns a reference to the truncated portion, avoiding allocation.
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Validation error codes for programmatic error handling
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ValidationErrorCode {
@@ -394,7 +407,14 @@ impl<'de> serde::Deserialize<'de> for RequestId {
             }
 
             fn visit_u64<E: de::Error>(self, v: u64) -> Result<RequestId, E> {
-                Ok(RequestId::Number(v as i64))
+                match i64::try_from(v) {
+                    Ok(n) => Ok(RequestId::Number(n)),
+                    Err(_) => Err(de::Error::custom(format!(
+                        "request id {} exceeds maximum value {}",
+                        v,
+                        i64::MAX
+                    ))),
+                }
             }
 
             fn visit_str<E: de::Error>(self, v: &str) -> Result<RequestId, E> {
@@ -1546,12 +1566,31 @@ impl RpcError {
                     if let Some(existing) = obj.get("cause") {
                         // Extract string from existing cause, handling non-string values
                         let existing_str = match existing {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
+                            serde_json::Value::String(s) => s.as_str(),
+                            other => {
+                                return {
+                                    // Non-string cause: format and truncate once
+                                    let other_str = other.to_string();
+                                    let combined = format!("{} <- {}", cause_str, other_str);
+                                    obj.insert(
+                                        "cause".to_string(),
+                                        serde_json::json!(truncate_utf8_owned(combined, MAX_ERROR_STRING_LEN)),
+                                    );
+                                    self.data = Some(data);
+                                    self
+                                }
+                            },
                         };
-                        // Truncate combined cause if too long (UTF-8 safe)
-                        let combined = format!("{} <- {}", cause_str, existing_str);
-                        let combined = truncate_utf8_owned(combined, MAX_ERROR_STRING_LEN);
+                        // Optimize: pre-calculate to avoid double allocation
+                        // " <- " = 4 bytes
+                        let combined_len = cause_str.len() + 4 + existing_str.len();
+                        let combined = if combined_len <= MAX_ERROR_STRING_LEN {
+                            format!("{} <- {}", cause_str, existing_str)
+                        } else {
+                            // Truncate existing chain to fit, keeping new cause fully
+                            let remaining = MAX_ERROR_STRING_LEN.saturating_sub(cause_str.len()).saturating_sub(4);
+                            format!("{} <- {}", cause_str, truncate_utf8(existing_str, remaining))
+                        };
                         obj.insert("cause".to_string(), serde_json::json!(combined));
                     } else {
                         obj.insert("cause".to_string(), serde_json::json!(cause_str));
@@ -1618,16 +1657,13 @@ impl RpcError {
                                 arr.push(serde_json::json!(hint_str));
                             } else {
                                 // Log warning - hints limit exceeded
-                                log::warn!(
-                                    "Maximum hints ({}) reached, hint dropped: {}",
-                                    MAX_HINTS,
-                                    if hint_str.len() > 50 {
-                                        // UTF-8 safe truncation for preview
-                                        format!("{}...", truncate_utf8_owned(hint_str.clone(), 50))
-                                    } else {
-                                        hint_str.clone()
-                                    }
-                                );
+                                // Avoid cloning by building preview only when needed
+                                let preview = if hint_str.len() > 50 {
+                                    format!("{}...", truncate_utf8(&hint_str, 50))
+                                } else {
+                                    hint_str // Move, no clone needed since hint is dropped
+                                };
+                                log::warn!("Maximum hints ({}) reached, hint dropped: {}", MAX_HINTS, preview);
                             }
                         } else {
                             // hints exists but is not an array - convert to array
@@ -1648,14 +1684,42 @@ impl RpcError {
     }
 
     /// Add multiple recovery hints at once
+    ///
+    /// Unlike calling `with_hint()` multiple times, this method logs a single
+    /// summary warning if hints exceed the limit, rather than one per dropped hint.
     pub fn with_hints<I, S>(mut self, hints: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        for hint in hints {
+        let hints: Vec<String> = hints.into_iter().map(Into::into).collect();
+        if hints.is_empty() {
+            return self;
+        }
+
+        // Get current hint count
+        let current_count = self
+            .data
+            .as_ref()
+            .and_then(|d| d.get("hints"))
+            .and_then(|h| h.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+
+        let available = MAX_HINTS.saturating_sub(current_count);
+        let to_add = hints.len().min(available);
+        let dropped = hints.len().saturating_sub(available);
+
+        // Add hints up to the limit
+        for hint in hints.into_iter().take(to_add) {
             self = self.with_hint(hint);
         }
+
+        // Log single summary if any were dropped
+        if dropped > 0 {
+            log::warn!("Maximum hints ({}) reached, {} hint(s) dropped", MAX_HINTS, dropped);
+        }
+
         self
     }
 

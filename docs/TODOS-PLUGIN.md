@@ -189,3 +189,25 @@
 
 **Documentation:** (🟢 Nice-to-have)
 - [x] Document BuildTarget "unknown" special case - `backend.rs:108-115` added documentation explaining when "unknown" triple is valid
+
+---
+
+## Newly Discovered Issues (12th Analysis)
+
+**Integer Safety:** (🔴 Critical)
+- [x] Fix RequestId u64→i64 silent truncation - `rpc.rs:396-397` now uses i64::try_from() with error
+
+**Performance:** (🟡 Important)
+- [x] Remove unnecessary clones in hint warning - `rpc.rs:1659-1663` now avoids cloning by moving or using truncate_utf8()
+- [x] Reduce allocations in error chain - `rpc.rs:1582-1591` now pre-calculates length to avoid double allocation
+- [ ] Optimize URL encoding check - `rpc.rs:188-221` allocates lowercase string on every path validation
+
+**Validation:** (🟡 Important)
+- [x] Improve with_hints() behavior - `rpc.rs:1692-1730` now logs single summary instead of per-hint warnings
+- [ ] Add batch validation for RunParams - `rpc.rs:924-943` stops at first error, no way to get all errors
+- [ ] Strengthen URL encoding validation - `rpc.rs:188-221` only checks %2e, %25, %5c, %2f, misses other encodings
+
+**Code Quality:** (🟢 Nice-to-have)
+- [ ] Replace mem::take with simpler pattern - `rpc.rs:713-734` in sanitize() method
+- [ ] Add expect() messages to test unwraps - `rpc.rs:1735,1826,2152-2154` test code uses bare unwrap()
+- [ ] Document RequestId limitations - `rpc.rs:348-362` u64 truncation and Null variant undocumented
