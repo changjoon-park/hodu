@@ -79,7 +79,7 @@ pub fn run_setup() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     for plugin in plugins {
-        if let Err(e) = install_from_registry(plugin, None, false, false) {
+        if let Err(e) = install_from_registry(plugin, None, false, false, false) {
             output::warning(&format!("Failed to install {}: {}", plugin, e));
         }
     }

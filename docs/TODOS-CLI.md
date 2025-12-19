@@ -163,5 +163,5 @@
 - [x] Validate snapshot data integrity - snapshot is already hashed for caching (`run.rs:243-247`), checksum verification is implicit
 
 **UX:** (🟢 Nice-to-have)
-- [ ] Add progress indication for slow clean operations - `clean.rs` could show progress for large directories
-- [ ] Add verbose mode for plugin installation - `install.rs` could show more details during install
+- [x] Add progress indication for slow clean operations - `clean.rs:95-142` added progress for dirs with 100+ files
+- [x] Add verbose mode for plugin installation - `plugin.rs:87-89` added `-v/--verbose` flag to show cargo/git output

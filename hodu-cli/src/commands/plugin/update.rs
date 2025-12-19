@@ -69,7 +69,7 @@ pub fn update_plugins(name: Option<&str>) -> Result<(), Box<dyn std::error::Erro
                             "  {} -> {} (protocol {})",
                             plugin.version, latest.version, latest.plugin
                         );
-                        install_from_registry(&plugin.name, None, false, true)?;
+                        install_from_registry(&plugin.name, None, false, true, false)?;
                         continue;
                     } else {
                         println!("  Already at latest compatible version: {}", plugin.version);
@@ -82,13 +82,13 @@ pub fn update_plugins(name: Option<&str>) -> Result<(), Box<dyn std::error::Erro
         // Fallback to source-based update
         match &plugin.source {
             PluginSource::Git { url, tag, subdir } => {
-                install_from_git(url, subdir.as_deref(), tag.as_deref(), false, true)?;
+                install_from_git(url, subdir.as_deref(), tag.as_deref(), false, true, false)?;
             },
             PluginSource::Local { path } => {
                 let path_buf = PathBuf::from(path);
                 if path_buf.exists() {
                     let source = PluginSource::Local { path: path.clone() };
-                    install_from_path(&path_buf, false, true, source)?;
+                    install_from_path(&path_buf, false, true, false, source)?;
                 } else {
                     println!("  Warning: Source path no longer exists: {}", path_buf.display());
                 }

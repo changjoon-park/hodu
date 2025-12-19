@@ -83,6 +83,10 @@ pub struct InstallArgs {
     /// Debug build
     #[arg(long)]
     pub debug: bool,
+
+    /// Show detailed build output
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
 }
 
 #[derive(Args)]
@@ -483,11 +487,11 @@ fn do_install(args: InstallArgs) -> Result<(), Box<dyn std::error::Error>> {
         let source = PluginSource::Local {
             path: path.canonicalize()?.to_string_lossy().to_string(),
         };
-        install_from_path(path, args.debug, args.force, source)
+        install_from_path(path, args.debug, args.force, args.verbose, source)
     } else if let Some(git) = &args.git {
-        install_from_git(git, args.subdir.as_deref(), args.tag.as_deref(), args.debug, args.force)
+        install_from_git(git, args.subdir.as_deref(), args.tag.as_deref(), args.debug, args.force, args.verbose)
     } else if let Some(name) = &args.name {
-        install_from_registry(name, args.tag.as_deref(), args.debug, args.force)
+        install_from_registry(name, args.tag.as_deref(), args.debug, args.force, args.verbose)
     } else {
         Err("No plugin specified. Use <name>, --path, or --git.".into())
     }

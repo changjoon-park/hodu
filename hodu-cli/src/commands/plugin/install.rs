@@ -80,6 +80,7 @@ pub fn install_from_registry(
     tag_override: Option<&str>,
     debug: bool,
     force: bool,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Parse name@version syntax
     let (name, requested_version) = if let Some(at_pos) = name_with_version.find('@') {
@@ -190,7 +191,7 @@ pub fn install_from_registry(
         compatible_versions.first().map(|v| v.tag.clone())
     };
 
-    install_from_git(&plugin.git, plugin.path.as_deref(), tag.as_deref(), debug, force)
+    install_from_git(&plugin.git, plugin.path.as_deref(), tag.as_deref(), debug, force, verbose)
 }
 
 /// Validate git URL format
@@ -231,6 +232,7 @@ pub fn install_from_git(
     tag: Option<&str>,
     debug: bool,
     force: bool,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Validate URL before cloning
     validate_git_url(url)?;
@@ -239,9 +241,12 @@ pub fn install_from_git(
     let temp_dir =
         TempDir::with_prefix("hodu_plugin_").map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
-    // Clone repository (quietly) with timeout
+    // Clone repository with timeout
     let mut git_cmd = Command::new("git");
-    git_cmd.arg("clone").arg("-q");
+    git_cmd.arg("clone");
+    if !verbose {
+        git_cmd.arg("-q"); // Quiet unless verbose
+    }
     if tag.is_none() {
         git_cmd.arg("--depth").arg("1");
     }
@@ -295,7 +300,7 @@ pub fn install_from_git(
         tag: tag.map(|t| t.to_string()),
         subdir: subdir.map(|s| s.to_string()),
     };
-    install_from_path(&install_path, debug, force, source)
+    install_from_path(&install_path, debug, force, verbose, source)
     // temp_dir is automatically cleaned up when dropped
 }
 
@@ -303,6 +308,7 @@ pub fn install_from_path(
     path: &Path,
     debug: bool,
     force: bool,
+    verbose: bool,
     source: PluginSource,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = path.canonicalize()?;
@@ -336,7 +342,9 @@ pub fn install_from_path(
     if !debug {
         cargo_cmd.arg("--release");
     }
-    cargo_cmd.arg("-q"); // Quiet output
+    if !verbose {
+        cargo_cmd.arg("-q"); // Quiet unless verbose
+    }
     cargo_cmd.current_dir(&path);
 
     let cmd_output = cargo_cmd.output()?;
