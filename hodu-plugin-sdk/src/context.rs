@@ -61,7 +61,21 @@ impl Context {
 
     /// Get the shared state
     ///
+    /// Returns a **cloned `Arc`** to the shared state, not a reference. This means
+    /// each call to `state()` increments the Arc's reference count. The returned
+    /// Arc can be stored and used after the Context is dropped.
+    ///
     /// Returns `None` if no state was configured or if the type doesn't match.
+    ///
+    /// # Performance Note
+    ///
+    /// While Arc cloning is cheap (just an atomic increment), if you need to access
+    /// the state multiple times in a handler, consider storing the result:
+    ///
+    /// ```ignore
+    /// let state = ctx.state::<MyState>();  // Clone once
+    /// // Use `state` multiple times without re-cloning
+    /// ```
     ///
     /// # Example
     ///
@@ -78,9 +92,12 @@ impl Context {
     /// }
     /// ```
     pub fn state<S: Send + Sync + 'static>(&self) -> Option<Arc<S>> {
-        self.state.as_ref().and_then(|s| match s.clone().downcast::<S>() {
-            Ok(state) => Some(state),
-            Err(_) => {
+        // Check if downcast would succeed before cloning Arc (optimization)
+        self.state.as_ref().and_then(|s| {
+            if (**s).type_id() == std::any::TypeId::of::<S>() {
+                // Type matches, clone and downcast (downcast will succeed)
+                Some(s.clone().downcast::<S>().expect("type_id matched but downcast failed"))
+            } else {
                 // Log in all builds - this indicates a programming error
                 eprintln!(
                     "Warning: State downcast failed for type '{}' (request_id: {:?})",
@@ -88,7 +105,7 @@ impl Context {
                     self.request_id
                 );
                 None
-            },
+            }
         })
     }
 

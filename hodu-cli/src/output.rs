@@ -184,6 +184,27 @@ pub fn format_duration(secs: f64) -> String {
     }
 }
 
+/// Sanitize a string for safe terminal output
+///
+/// Replaces control characters (except tab and newline) with their escaped forms
+/// to prevent terminal escape sequence injection attacks.
+pub fn sanitize_for_terminal(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            // Allow safe whitespace
+            '\t' | '\n' => result.push(c),
+            // Escape control characters and escape character itself
+            '\x00'..='\x1f' | '\x7f' => {
+                result.push_str(&format!("\\x{:02x}", c as u8));
+            },
+            // Normal characters pass through
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
 /// Format byte size in human readable form
 pub fn format_size(bytes: usize) -> String {
     const KB: usize = 1024;

@@ -79,6 +79,9 @@ fn load_tensor_json(
         .as_object()
         .ok_or("JSON must be an object with shape, dtype, data")?;
 
+    // Maximum reasonable dimension size to prevent DoS (1 billion elements per dimension)
+    const MAX_DIMENSION_SIZE: u64 = 1_000_000_000;
+
     let shape: Vec<usize> = obj
         .get("shape")
         .and_then(|v| v.as_array())
@@ -86,6 +89,9 @@ fn load_tensor_json(
         .iter()
         .map(|v| {
             let n = v.as_u64().ok_or("Invalid shape dimension: expected integer")?;
+            if n > MAX_DIMENSION_SIZE {
+                return Err("Shape dimension exceeds maximum allowed size (1 billion)");
+            }
             usize::try_from(n).map_err(|_| "Shape dimension too large for this platform")
         })
         .collect::<Result<Vec<_>, _>>()?;

@@ -47,3 +47,25 @@ pub fn load_registry_mut() -> Result<(PluginRegistry, std::path::PathBuf), Box<d
 pub fn get_registry_path() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     Ok(PluginRegistry::default_path()?)
 }
+
+/// Check if the registry is empty without fully parsing it
+///
+/// This is more efficient than loading the full registry when only checking
+/// for the presence of any plugins.
+pub fn is_registry_empty() -> bool {
+    let registry_path = match PluginRegistry::default_path() {
+        Ok(p) => p,
+        Err(_) => return true, // If we can't get the path, assume empty
+    };
+
+    if !registry_path.exists() {
+        return true;
+    }
+
+    // Read just enough to check for plugin entries
+    // The registry is TOML with [[plugins]] sections
+    match std::fs::read_to_string(&registry_path) {
+        Ok(content) => !content.contains("[[plugins]]"),
+        Err(_) => true, // If we can't read, assume empty
+    }
+}

@@ -55,6 +55,41 @@ pub struct MockClient {
     request_counter: std::sync::atomic::AtomicI64,
 }
 
+/// Handle for cancelling a mock request
+///
+/// Use this to test cancellation-aware handlers.
+///
+/// # Example
+///
+/// ```ignore
+/// let client = MockClient::new();
+/// let (cancel_handle, future) = client.call_handler_cancellable(my_handler, params);
+///
+/// // Cancel after some time
+/// tokio::spawn(async move {
+///     tokio::time::sleep(Duration::from_millis(100)).await;
+///     cancel_handle.cancel();
+/// });
+///
+/// let result = future.await;
+/// assert!(matches!(result, Err(e) if e.code == error_codes::REQUEST_CANCELLED));
+/// ```
+pub struct MockCancellationHandle {
+    token: tokio_util::sync::CancellationToken,
+}
+
+impl MockCancellationHandle {
+    /// Cancel the associated request
+    pub fn cancel(&self) {
+        self.token.cancel();
+    }
+
+    /// Check if cancellation was requested
+    pub fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
+    }
+}
+
 impl MockClient {
     /// Create a new mock client
     pub fn new() -> Self {
@@ -78,6 +113,46 @@ impl MockClient {
     {
         let ctx = Context::new(self.next_id());
         handler(ctx, params).await
+    }
+
+    /// Call a handler with cancellation support
+    ///
+    /// Returns a cancellation handle and a future. Use the handle to cancel the
+    /// request, which will set `ctx.is_cancelled()` to true in the handler.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// async fn cancellable_handler(ctx: Context, _: ()) -> Result<String, RpcError> {
+    ///     for i in 0..100 {
+    ///         if ctx.is_cancelled() {
+    ///             return Err(RpcError::cancelled());
+    ///         }
+    ///         tokio::time::sleep(Duration::from_millis(10)).await;
+    ///     }
+    ///     Ok("done".to_string())
+    /// }
+    ///
+    /// let client = MockClient::new();
+    /// let (handle, fut) = client.call_handler_cancellable(cancellable_handler, ());
+    /// handle.cancel();
+    /// let result = fut.await;
+    /// assert!(result.is_err());
+    /// ```
+    pub fn call_handler_cancellable<F, Fut, P, R>(
+        &self,
+        handler: F,
+        params: P,
+    ) -> (MockCancellationHandle, impl Future<Output = Result<R, RpcError>>)
+    where
+        F: FnOnce(Context, P) -> Fut,
+        Fut: Future<Output = Result<R, RpcError>>,
+    {
+        let ctx = Context::new(self.next_id());
+        let token = ctx.cancellation_token().clone();
+        let handle = MockCancellationHandle { token };
+        let future = handler(ctx, params);
+        (handle, future)
     }
 
     /// Call a handler with JSON params and get JSON result
@@ -129,6 +204,19 @@ type BoxedTestHandler = Box<
 /// Integration test harness for plugin testing
 ///
 /// Allows registering handlers and calling them as if through JSON-RPC.
+///
+/// # Poisoned Lock Recovery
+///
+/// The `logs` field uses an `RwLock` that may become poisoned if a test panics
+/// while holding the lock. Methods like `get_logs()`, `clear_logs()`, and
+/// `assert_logged()` handle this gracefully by:
+///
+/// 1. Printing a warning to stderr about the poisoned state
+/// 2. Recovering the inner data from the poisoned lock
+/// 3. Continuing operation (data may be incomplete due to the panic)
+///
+/// This design ensures that subsequent tests can still run even if a previous
+/// test panicked, though the log data may be unreliable in such cases.
 ///
 /// # Example
 ///

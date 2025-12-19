@@ -7,6 +7,7 @@ use crate::plugins::{backend_plugin_name, load_registry, PluginManager, PluginRe
 use crate::tensor::{load_tensor_data, load_tensor_file, save_outputs, save_tensor_data};
 use crate::utils::{core_dtype_to_plugin, path_to_str, plugin_dtype_to_core};
 use clap::Args;
+use fs2::FileExt;
 use hodu_core::snapshot::Snapshot;
 use hodu_core::tensor::Tensor;
 use hodu_core::types::{Device as CoreDevice, Shape};
@@ -177,7 +178,15 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         output::loading(&model_name);
         let client = manager.get_plugin(&format_entry.name)?;
         let result = client.load_model(path_to_str(&args.model)?)?;
-        PathBuf::from(result.snapshot_path)
+        // Validate plugin-returned snapshot path
+        let snapshot_path = PathBuf::from(&result.snapshot_path);
+        if result.snapshot_path.is_empty() {
+            return Err("Plugin returned empty snapshot path".into());
+        }
+        // Canonicalize to resolve any path traversal attempts
+        snapshot_path
+            .canonicalize()
+            .map_err(|e| format!("Invalid snapshot path from plugin '{}': {}", result.snapshot_path, e))?
     } else {
         // Builtin format - model is already a snapshot
         args.model.clone()
@@ -276,9 +285,13 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&cache_dir)?;
     let library_path = cache_dir.join(format!("{}.{}", snapshot_hash, lib_ext));
 
-    // Build if not cached
+    // Build if not cached (use file lock to prevent concurrent builds)
     let backend_client = manager.get_plugin(&backend_plugin.name)?;
     let start = std::time::Instant::now();
+    let lock_path = cache_dir.join(format!("{}.lock", snapshot_hash));
+    let lock_file = std::fs::File::create(&lock_path)?;
+    lock_file.lock_exclusive()?;
+    // Check inside lock to prevent TOCTOU race
     if !library_path.exists() {
         output::compiling(&format!("{} ({})", model_name, device));
         backend_client.build(
@@ -291,6 +304,9 @@ pub fn execute(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         output::cached(&model_name);
     }
+    lock_file.unlock()?;
+    // Clean up lock file (best effort)
+    let _ = std::fs::remove_file(&lock_path);
 
     // Run with cached library
     output::running(&format!("{} ({})", model_name, device));
@@ -534,9 +550,10 @@ fn parse_device(device_str: &str) -> Result<Device, Box<dyn std::error::Error>> 
         _ => {
             let is_known = KNOWN_DEVICE_PREFIXES.iter().any(|prefix| device.starts_with(prefix));
             if !is_known {
+                // Sanitize device string to prevent terminal escape sequence injection
                 eprintln!(
                     "Warning: Unknown device '{}'. Known devices: {}",
-                    device,
+                    crate::output::sanitize_for_terminal(&device),
                     KNOWN_DEVICE_PREFIXES.join(", ")
                 );
             }

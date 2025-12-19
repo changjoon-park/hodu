@@ -200,14 +200,30 @@
 **Performance:** (🟡 Important)
 - [x] Remove unnecessary clones in hint warning - `rpc.rs:1659-1663` now avoids cloning by moving or using truncate_utf8()
 - [x] Reduce allocations in error chain - `rpc.rs:1582-1591` now pre-calculates length to avoid double allocation
-- [ ] Optimize URL encoding check - `rpc.rs:188-221` allocates lowercase string on every path validation
+- [x] Optimize URL encoding check - `rpc.rs:201-257` uses `contains_ci()` helper with no allocation
 
 **Validation:** (🟡 Important)
 - [x] Improve with_hints() behavior - `rpc.rs:1692-1730` now logs single summary instead of per-hint warnings
-- [ ] Add batch validation for RunParams - `rpc.rs:924-943` stops at first error, no way to get all errors
-- [ ] Strengthen URL encoding validation - `rpc.rs:188-221` only checks %2e, %25, %5c, %2f, misses other encodings
+- [x] Add batch validation for RunParams - `rpc.rs:1034-1064` added `validate_all()` method that returns all errors
+- [x] Strengthen URL encoding validation - `rpc.rs:210-257` now checks %00, %c0, %c1 for overlong UTF-8 bypasses
 
 **Code Quality:** (🟢 Nice-to-have)
-- [ ] Replace mem::take with simpler pattern - `rpc.rs:713-734` in sanitize() method
-- [ ] Add expect() messages to test unwraps - `rpc.rs:1735,1826,2152-2154` test code uses bare unwrap()
-- [ ] Document RequestId limitations - `rpc.rs:348-362` u64 truncation and Null variant undocumented
+- [x] Replace mem::take with simpler pattern - `rpc.rs:786-818` now uses `truncate_string_inplace()` helper
+- [x] Add expect() messages to test unwraps - `rpc.rs:1891,1981-1982,2308-2330` all test unwraps have expect messages
+- [x] Document RequestId limitations - `rpc.rs:361-381` documented i64 storage, u64 conversion limits, and Null variant usage
+
+---
+
+## Newly Discovered Issues (13th Analysis)
+
+**Validation:** (🟡 Important)
+- [x] Fix scalar tensor data validation - `tensor.rs:399-401` test now uses proper data size for scalar (4 bytes for F32)
+- [x] Add return value to sanitize() - `rpc.rs:727-756` now returns bool indicating if truncation occurred
+- [x] Strengthen version validation in validate() - `rpc.rs:579-591` intentional: validate() for basic, validate_strict() for semver
+
+**Code Quality:** (🟡 Important)
+- [x] Fix inconsistent percent handling - `rpc.rs:1430-1446` already documented as intentional (clamping for convenience vs strict validation)
+
+**Code Quality:** (🟢 Nice-to-have)
+- [x] Fix misleading comment about variable movement - `rpc.rs:1688-1694` removed misleading comment, simplified code
+- [x] Reduce hint logging info disclosure - `rpc.rs:1690-1694` now logs only hint length, not content

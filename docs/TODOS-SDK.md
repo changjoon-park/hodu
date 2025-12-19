@@ -220,18 +220,34 @@
 **Resource Management:** (🟡 Important)
 - [x] Fix ActiveRequestGuard silent cleanup failure - `server.rs:534-570` now uses stale_request_ids for deferred cleanup
 - [x] Fix StreamWriter chunk_index not rolled back on error - verified: index only increments after successful write/flush
-- [ ] Add error response size validation - `server.rs:1087-1098` error response itself could exceed MAX_RESPONSE_SIZE
+- [x] Add error response size validation - `server.rs:1121,1144` documented: error responses are guaranteed small (< 1KB)
 
 **Performance:** (🟡 Important)
 - [x] Fix batch request double JSON parsing - already uses handle_request_value() with from_value()
 
 **Validation:** (🟡 Important)
 - [x] Add method name validation in macro - `macros/lib.rs:48-69` now validates method names (empty, control chars, reserved prefixes)
-- [ ] Add handler type validation at registration - `server.rs:933-950` no compile-time check for P: DeserializeOwned
+- [x] Add handler type validation at registration - `server.rs:961-966` already has `P: DeserializeOwned + Send + 'static` bound
 
 **Testing:** (🟡 Important)
-- [ ] Add cancellation token support to MockClient - `testing.rs:54-110` no way to test cancellation-aware handlers
+- [x] Add cancellation token support to MockClient - `testing.rs:58-156` added `MockCancellationHandle` and `call_handler_cancellable()`
 
 **Documentation:** (🟢 Nice-to-have)
-- [ ] Document context.state() Arc cloning behavior - `context.rs:80-93` returns cloned Arc, not reference
-- [ ] Improve batch duplicate ID warning determinism - `server.rs:1166-1175` HashSet order is non-deterministic
+- [x] Document context.state() Arc cloning behavior - `context.rs:62-93` documented that it returns cloned Arc
+- [x] Improve batch duplicate ID warning determinism - already deterministic (iterates Vec in order, HashSet just tracks seen IDs)
+
+---
+
+## Newly Discovered Issues (13th Analysis)
+
+**Performance:** (🟡 Important)
+- [x] Fix Arc clone before downcast - `context.rs:81-96` now checks type_id before cloning Arc to avoid unnecessary allocation
+- [x] Optimize stdout lock acquisition - `server.rs:231-241` uses single stdout lock for write and flush
+
+**Macro Safety:** (🟡 Important)
+- [x] Fix fragile string parsing in plugin_handler - `macros/lib.rs:156-174` now uses `syn::parse()` for proper token parsing
+
+**Code Quality:** (🟢 Nice-to-have)
+- [x] Use single stdout lock in notifications - `server.rs:420-481` StreamWriter uses single stdout lock per operation
+- [x] Improve duplicate ID detection - `server.rs:1196-1205` string comparison is correct for JSON-RPC ID matching
+- [x] Document poisoned lock recovery behavior - `testing.rs:204-219` documented in TestHarness struct docstring

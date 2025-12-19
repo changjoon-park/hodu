@@ -95,9 +95,17 @@ pub fn execute(args: BuildArgs) -> Result<(), Box<dyn std::error::Error>> {
         // Check write permission on parent directory
         if !parent.as_os_str().is_empty() && parent.exists() {
             let test_path = parent.join(".hodu_write_test");
+            // Use RAII guard to ensure cleanup even on early return
+            struct TestFileGuard<'a>(&'a std::path::Path);
+            impl Drop for TestFileGuard<'_> {
+                fn drop(&mut self) {
+                    let _ = std::fs::remove_file(self.0);
+                }
+            }
             match std::fs::File::create(&test_path) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&test_path);
+                Ok(_file) => {
+                    let _guard = TestFileGuard(&test_path);
+                    // Guard will clean up on drop
                 },
                 Err(_) => {
                     return Err(format!("Cannot write to output directory: {}", parent.display()).into());

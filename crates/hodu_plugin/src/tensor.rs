@@ -393,11 +393,18 @@ mod tests {
 
     #[test]
     fn test_tensor_data_numel() {
-        let tensor = TensorData::new(vec![], vec![2, 3, 4], PluginDType::F32);
+        let tensor = TensorData::new(vec![0; 24 * 4], vec![2, 3, 4], PluginDType::F32);
         assert_eq!(tensor.numel(), Some(24));
 
-        let scalar = TensorData::new(vec![], vec![], PluginDType::F32);
+        // Scalar tensor: empty shape means 1 element, which needs 4 bytes for F32
+        let scalar = TensorData::new(vec![0; 4], vec![], PluginDType::F32);
         assert_eq!(scalar.numel(), Some(1));
+        assert!(scalar.is_scalar());
+
+        // Verify new_checked() validates scalar data size
+        assert!(TensorData::new_checked(vec![0; 4], vec![], PluginDType::F32).is_ok());
+        assert!(TensorData::new_checked(vec![], vec![], PluginDType::F32).is_err());
+        // Empty data for scalar should fail
     }
 
     #[test]

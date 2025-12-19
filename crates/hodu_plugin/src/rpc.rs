@@ -88,6 +88,20 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+/// Truncate a String in-place to at most `max_bytes`, respecting UTF-8 boundaries.
+/// Returns true if truncation occurred.
+fn truncate_string_inplace(s: &mut String, max_bytes: usize) -> bool {
+    if s.len() <= max_bytes {
+        return false;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    true
+}
+
 /// Validation error codes for programmatic error handling
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ValidationErrorCode {
@@ -198,38 +212,61 @@ fn validate_path(path: &str, field: &str) -> Result<(), ValidationError> {
             "path contains traversal sequence (..)",
         ));
     }
-    // Check for URL-encoded path traversal (%2e = '.', case insensitive)
-    // This catches %2e%2e, %2E%2E, and mixed case variants
-    let lower = path.to_lowercase();
-    if lower.contains("%2e") {
+    // Check for URL-encoded path traversal patterns (case insensitive, no allocation)
+    // Helper to check if path contains a pattern case-insensitively
+    fn contains_ci(haystack: &str, needle: &str) -> bool {
+        haystack
+            .as_bytes()
+            .windows(needle.len())
+            .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+    }
+
+    // %2e = '.', catches path traversal like %2e%2e
+    if contains_ci(path, "%2e") {
         return Err(ValidationError::new(
             ValidationErrorCode::EncodedPath,
             field,
             "path contains URL-encoded characters (%2e)",
         ));
     }
-    // Check for double URL-encoding (%25 = '%')
-    if lower.contains("%25") {
+    // %25 = '%', catches double-encoding like %252e
+    if contains_ci(path, "%25") {
         return Err(ValidationError::new(
             ValidationErrorCode::EncodedPath,
             field,
             "path contains double-encoded characters (%25)",
         ));
     }
-    // Check for backslash encoding (%5c = '\')
-    if lower.contains("%5c") {
+    // %5c = '\', catches encoded backslash
+    if contains_ci(path, "%5c") {
         return Err(ValidationError::new(
             ValidationErrorCode::EncodedPath,
             field,
             "path contains encoded backslash (%5c)",
         ));
     }
-    // Check for forward slash encoding (%2f = '/')
-    if lower.contains("%2f") {
+    // %2f = '/', catches encoded forward slash
+    if contains_ci(path, "%2f") {
         return Err(ValidationError::new(
             ValidationErrorCode::EncodedPath,
             field,
             "path contains encoded forward slash (%2f)",
+        ));
+    }
+    // %00 = null byte (encoded)
+    if contains_ci(path, "%00") {
+        return Err(ValidationError::new(
+            ValidationErrorCode::EncodedPath,
+            field,
+            "path contains encoded null byte (%00)",
+        ));
+    }
+    // %c0%ae and %c1%9c = overlong UTF-8 encoding of '.' and '/' (security bypass)
+    if contains_ci(path, "%c0") || contains_ci(path, "%c1") {
+        return Err(ValidationError::new(
+            ValidationErrorCode::EncodedPath,
+            field,
+            "path contains potentially overlong UTF-8 encoding",
         ));
     }
     // Check for home directory expansion (could escape intended directories)
@@ -363,6 +400,22 @@ pub struct Notification {
 /// Per JSON-RPC 2.0 spec, IDs can be numbers, strings, or null.
 /// Null is used in error responses when the request ID cannot be determined
 /// (e.g., parse errors, invalid JSON).
+///
+/// # Numeric ID Limitations
+///
+/// Numeric IDs are stored as `i64`. When deserializing:
+/// - `u64` values within `i64::MAX` are converted to `i64` directly
+/// - `u64` values exceeding `i64::MAX` (rare in practice) return an error
+/// - Floating-point values are truncated to integers (fractional part lost)
+///
+/// For maximum compatibility, prefer string IDs when using values that may
+/// exceed `i64::MAX` (9,223,372,036,854,775,807).
+///
+/// # Null Variant
+///
+/// The `Null` variant is used for error responses when the request ID cannot
+/// be determined (parse errors, invalid JSON). It should not be used for
+/// normal request/response matching.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RequestId {
     /// Numeric request ID
@@ -728,31 +781,40 @@ impl PluginMetadataRpc {
     ///
     /// This is a lenient alternative to validation that ensures all fields
     /// are within limits by truncating them if necessary.
-    pub fn sanitize(&mut self) {
+    ///
+    /// Returns `true` if any field was truncated, `false` if no changes were made.
+    pub fn sanitize(&mut self) -> bool {
+        let mut truncated = false;
+
         if let Some(ref mut desc) = self.description {
-            *desc = truncate_utf8_owned(std::mem::take(desc), MAX_METADATA_DESCRIPTION_LEN);
+            truncated |= truncate_string_inplace(desc, MAX_METADATA_DESCRIPTION_LEN);
         }
         if let Some(ref mut author) = self.author {
-            *author = truncate_utf8_owned(std::mem::take(author), MAX_METADATA_AUTHOR_LEN);
+            truncated |= truncate_string_inplace(author, MAX_METADATA_AUTHOR_LEN);
         }
         if let Some(ref mut homepage) = self.homepage {
-            *homepage = truncate_utf8_owned(std::mem::take(homepage), MAX_METADATA_URL_LEN);
+            truncated |= truncate_string_inplace(homepage, MAX_METADATA_URL_LEN);
         }
         if let Some(ref mut license) = self.license {
-            *license = truncate_utf8_owned(std::mem::take(license), MAX_METADATA_LICENSE_LEN);
+            truncated |= truncate_string_inplace(license, MAX_METADATA_LICENSE_LEN);
         }
         if let Some(ref mut repository) = self.repository {
-            *repository = truncate_utf8_owned(std::mem::take(repository), MAX_METADATA_URL_LEN);
+            truncated |= truncate_string_inplace(repository, MAX_METADATA_URL_LEN);
         }
         if let Some(ref mut targets) = self.supported_targets {
-            targets.truncate(MAX_SUPPORTED_TARGETS);
+            if targets.len() > MAX_SUPPORTED_TARGETS {
+                truncated = true;
+                targets.truncate(MAX_SUPPORTED_TARGETS);
+            }
             for target in targets.iter_mut() {
-                *target = truncate_utf8_owned(std::mem::take(target), MAX_TARGET_TRIPLE_LEN);
+                truncated |= truncate_string_inplace(target, MAX_TARGET_TRIPLE_LEN);
             }
         }
         if let Some(ref mut version) = self.min_hodu_version {
-            *version = truncate_utf8_owned(std::mem::take(version), MAX_METADATA_VERSION_LEN);
+            truncated |= truncate_string_inplace(version, MAX_METADATA_VERSION_LEN);
         }
+
+        truncated
     }
 }
 
@@ -942,7 +1004,7 @@ pub struct RunParams {
 }
 
 impl RunParams {
-    /// Validate the parameters
+    /// Validate the parameters (stops at first error)
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_path(&self.library_path, "library_path")?;
         validate_path(&self.snapshot_path, "snapshot_path")?;
@@ -960,6 +1022,38 @@ impl RunParams {
             })?;
         }
         Ok(())
+    }
+
+    /// Validate all parameters and collect all errors
+    ///
+    /// Unlike `validate()` which stops at the first error, this method
+    /// continues validation and returns all errors found.
+    pub fn validate_all(&self) -> Vec<ValidationError> {
+        let mut errors = Vec::new();
+
+        if let Err(e) = validate_path(&self.library_path, "library_path") {
+            errors.push(e);
+        }
+        if let Err(e) = validate_path(&self.snapshot_path, "snapshot_path") {
+            errors.push(e);
+        }
+        if let Err(e) = validate_non_empty(&self.device, "device") {
+            errors.push(e);
+        }
+        if self.inputs.len() > MAX_INPUTS {
+            errors.push(ValidationError::too_many_items(
+                "inputs",
+                format!("too many inputs ({} > {})", self.inputs.len(), MAX_INPUTS),
+            ));
+        }
+        for (i, input) in self.inputs.iter().enumerate() {
+            if let Err(mut e) = input.validate() {
+                e.field = format!("inputs[{}].{}", i, e.field);
+                errors.push(e);
+            }
+        }
+
+        errors
     }
 }
 
@@ -1578,7 +1672,7 @@ impl RpcError {
                                     );
                                     self.data = Some(data);
                                     self
-                                }
+                                };
                             },
                         };
                         // Optimize: pre-calculate to avoid double allocation
@@ -1656,14 +1750,12 @@ impl RpcError {
                             if arr.len() < MAX_HINTS {
                                 arr.push(serde_json::json!(hint_str));
                             } else {
-                                // Log warning - hints limit exceeded
-                                // Avoid cloning by building preview only when needed
-                                let preview = if hint_str.len() > 50 {
-                                    format!("{}...", truncate_utf8(&hint_str, 50))
-                                } else {
-                                    hint_str // Move, no clone needed since hint is dropped
-                                };
-                                log::warn!("Maximum hints ({}) reached, hint dropped: {}", MAX_HINTS, preview);
+                                // Log warning without hint content to avoid info disclosure
+                                log::warn!(
+                                    "Maximum hints ({}) reached, hint dropped (len={})",
+                                    MAX_HINTS,
+                                    hint_str.len()
+                                );
                             }
                         } else {
                             // hints exists but is not an array - convert to array
@@ -1796,7 +1888,7 @@ mod tests {
     #[test]
     fn test_request_serialization() {
         let request = Request::new("test.method", Some(serde_json::json!({"key": "value"})), 1.into());
-        let json = serde_json::to_string(&request).unwrap();
+        let json = serde_json::to_string(&request).expect("Request should serialize to JSON");
         assert!(json.contains("\"jsonrpc\":\"2.0\""));
         assert!(json.contains("\"method\":\"test.method\""));
         assert!(json.contains("\"id\":1"));
@@ -1886,8 +1978,8 @@ mod tests {
     #[test]
     fn test_json_roundtrip() {
         let request = Request::new("test", Some(serde_json::json!({"x": 1})), 1.into());
-        let json = serde_json::to_string(&request).unwrap();
-        let parsed: Request = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&request).expect("Request should serialize");
+        let parsed: Request = serde_json::from_str(&json).expect("Request should deserialize");
         assert_eq!(parsed.method, "test");
         assert_eq!(parsed.id, RequestId::Number(1));
     }
@@ -2213,8 +2305,29 @@ mod tests {
 
         metadata.sanitize();
 
-        assert!(metadata.description.as_ref().unwrap().len() <= MAX_METADATA_DESCRIPTION_LEN);
-        assert!(metadata.author.as_ref().unwrap().len() <= MAX_METADATA_AUTHOR_LEN);
-        assert!(metadata.license.as_ref().unwrap().len() <= MAX_METADATA_LICENSE_LEN);
+        assert!(
+            metadata
+                .description
+                .as_ref()
+                .expect("description should be Some after sanitize")
+                .len()
+                <= MAX_METADATA_DESCRIPTION_LEN
+        );
+        assert!(
+            metadata
+                .author
+                .as_ref()
+                .expect("author should be Some after sanitize")
+                .len()
+                <= MAX_METADATA_AUTHOR_LEN
+        );
+        assert!(
+            metadata
+                .license
+                .as_ref()
+                .expect("license should be Some after sanitize")
+                .len()
+                <= MAX_METADATA_LICENSE_LEN
+        );
     }
 }

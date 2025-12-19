@@ -154,7 +154,25 @@ fn to_snake_case(s: &str) -> String {
 /// ```
 #[proc_macro_attribute]
 pub fn plugin_handler(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let method_name = attr.to_string().trim_matches('"').to_string();
+    // Parse attribute as a string literal for robust handling
+    let method_name: syn::LitStr = match syn::parse(attr) {
+        Ok(lit) => lit,
+        Err(e) => {
+            return syn::Error::new(
+                e.span(),
+                "expected string literal for method name, e.g., #[plugin_handler(\"backend.run\")]",
+            )
+            .to_compile_error()
+            .into();
+        },
+    };
+    let method_name_str = method_name.value();
+
+    // Validate method name
+    if let Some(err) = validate_method_name(&method_name_str) {
+        return syn::Error::new_spanned(method_name, err).to_compile_error().into();
+    }
+
     let input = parse_macro_input!(item as syn::ItemFn);
 
     let fn_name = &input.sig.ident;
@@ -170,7 +188,7 @@ pub fn plugin_handler(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         /// Register this handler with a plugin server (auto-generated)
         pub fn #register_fn_name(server: hodu_plugin_sdk::server::PluginServer) -> hodu_plugin_sdk::server::PluginServer {
-            server.method(#method_name, #fn_name)
+            server.method(#method_name_str, #fn_name)
         }
     };
 

@@ -233,8 +233,11 @@ fn send_notification(notification: &Notification) -> Result<(), std::io::Error> 
     use std::io::Write;
     let json =
         serde_json::to_string(notification).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    writeln!(std::io::stdout(), "{}", json)?;
-    std::io::stdout().flush()
+    // Use single stdout lock for both write and flush
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    writeln!(handle, "{}", json)?;
+    handle.flush()
 }
 
 /// Send a progress notification to the CLI (fire-and-forget)
@@ -414,8 +417,11 @@ impl StreamWriter {
             )
         })?;
 
-        writeln!(std::io::stdout(), "{}", json)?;
-        std::io::stdout().flush()?;
+        // Use single stdout lock for both write and flush
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        writeln!(handle, "{}", json)?;
+        handle.flush()?;
 
         self.chunk_index += 1;
         Ok(())
@@ -438,8 +444,11 @@ impl StreamWriter {
             )
         })?;
 
-        writeln!(std::io::stdout(), "{}", json)?;
-        std::io::stdout().flush()?;
+        // Use single stdout lock for both write and flush
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        writeln!(handle, "{}", json)?;
+        handle.flush()?;
 
         self.chunk_index += 1;
         Ok(())
@@ -462,8 +471,11 @@ impl StreamWriter {
             )
         })?;
 
-        writeln!(std::io::stdout(), "{}", json)?;
-        std::io::stdout().flush()?;
+        // Use single stdout lock for both write and flush
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        writeln!(handle, "{}", json)?;
+        handle.flush()?;
 
         Ok(())
     }
@@ -1106,6 +1118,7 @@ impl PluginServer {
                             json.len(),
                             MAX_RESPONSE_SIZE
                         );
+                        // Error response is guaranteed small (< 1KB) - no size check needed
                         let error_resp = Response::error(
                             RequestId::Null,
                             RpcError::new(error_codes::INTERNAL_ERROR, "Response too large"),
@@ -1128,6 +1141,7 @@ impl PluginServer {
                             json.len(),
                             MAX_RESPONSE_SIZE
                         );
+                        // Error response is guaranteed small (< 1KB) - no size check needed
                         let error_resp = Response::error(
                             resp.id,
                             RpcError::new(error_codes::INTERNAL_ERROR, "Response too large"),

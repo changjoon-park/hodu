@@ -2,7 +2,7 @@
 
 use crate::commands::plugin::{get_plugins_dir, install_from_registry};
 use crate::output;
-use crate::plugins::load_registry;
+use crate::plugins::is_registry_empty;
 use inquire::Select;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -22,11 +22,10 @@ struct PresetInfo {
 }
 
 /// Check if this is the first run (no plugins installed)
+///
+/// Uses lightweight string check instead of full TOML parsing for efficiency.
 pub fn is_first_run() -> bool {
-    match load_registry() {
-        Ok(registry) => registry.plugins.is_empty(),
-        Err(_) => true,
-    }
+    is_registry_empty()
 }
 
 /// Run the first-time setup wizard

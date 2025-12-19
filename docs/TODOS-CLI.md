@@ -217,3 +217,24 @@
 **Error Handling:** (🟡 Important)
 - [x] Improve subdir error message - `install.rs:302-305` now shows appropriate message for None vs Some case
 - [x] Add warning on plugin connection failure - `doctor.rs:86-89` now shows warning instead of silent skip
+
+---
+
+## Newly Discovered Issues (13th Analysis)
+
+**Race Conditions:** (🟡 Important)
+- [x] Fix cache file TOCTOU race condition - `run.rs:279-294` now uses fs2 file locking to prevent race window
+
+**Validation:** (🟡 Important)
+- [x] Add shape dimension bounds check - `tensor/loader.rs:87-90` added MAX_DIMENSION_SIZE (1 billion) limit
+- [x] Re-validate registry-loaded paths - `plugin/install.rs:205-227,273-276,339-349` added `validate_subdir()` and defense-in-depth canonicalization check
+- [x] Validate plugin-returned snapshot path - `run.rs:175-187` now canonicalizes and validates path stays within expected location
+
+**Resource Management:** (🟡 Important)
+- [x] Clean up write test file on failure - `build.rs:97-114` added RAII `TestFileGuard` for automatic cleanup
+- [x] Limit registry string size - `plugin/install.rs:108-140` limited to 20 plugins, truncated descriptions
+
+**Code Quality:** (🟢 Nice-to-have)
+- [x] Sanitize device string for terminal output - `run.rs:553-558` uses `sanitize_for_terminal()` to escape control chars
+- [x] Warn on missing manifest fields - `plugin/install.rs:703-724` now warns when using default values
+- [x] Optimize registry loading in is_first_run - `setup.rs:27-28` uses lightweight `is_registry_empty()` check

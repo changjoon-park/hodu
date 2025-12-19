@@ -105,22 +105,45 @@ pub fn install_from_registry(
     let registry: PluginRegistryFile = toml::from_str(&body).map_err(|e| format!("Failed to parse registry: {}", e))?;
 
     // Find plugin
+    const MAX_SHOWN_PLUGINS: usize = 20;
+    const MAX_DESC_LEN: usize = 60;
     let plugin = registry.plugin.iter().find(|p| p.name == name).ok_or_else(|| {
+        let total = registry.plugin.len();
         let available: Vec<_> = registry
             .plugin
             .iter()
+            .take(MAX_SHOWN_PLUGINS)
             .map(|p| {
                 if let Some(desc) = &p.description {
-                    format!("{} - {}", p.name, desc)
+                    let truncated = if desc.len() > MAX_DESC_LEN {
+                        format!(
+                            "{}...",
+                            &desc[..desc
+                                .char_indices()
+                                .take_while(|(i, _)| *i < MAX_DESC_LEN)
+                                .last()
+                                .map(|(i, _)| i)
+                                .unwrap_or(0)]
+                        )
+                    } else {
+                        desc.clone()
+                    };
+                    format!("{} - {}", p.name, truncated)
                 } else {
                     p.name.clone()
                 }
             })
             .collect();
+        let suffix = if total > MAX_SHOWN_PLUGINS {
+            format!("\n  (and {} more)", total - MAX_SHOWN_PLUGINS)
+        } else {
+            String::new()
+        };
         format!(
-            "Plugin '{}' not found in registry.\n\nAvailable plugins:\n  {}",
+            "Plugin '{}' not found in registry.\n\nAvailable plugins:\n  {}{}",
             name,
-            available.join("\n  ")
+            available.join("\n  "),
+            suffix
         )
     })?;
 
@@ -202,6 +225,31 @@ pub fn install_from_registry(
     )
 }
 
+/// Validate a subdirectory path for safety
+///
+/// Prevents path traversal attacks from malicious registry entries.
+fn validate_subdir(subdir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if subdir.is_empty() {
+        return Err("Subdirectory path cannot be empty".into());
+    }
+    if subdir.contains('\0') {
+        return Err("Subdirectory path contains null byte".into());
+    }
+    // Check for path traversal (both Unix and Windows separators)
+    if subdir.contains("..") {
+        return Err("Subdirectory path contains path traversal sequence (..)".into());
+    }
+    // Reject absolute paths
+    if subdir.starts_with('/') || subdir.starts_with('\\') {
+        return Err("Subdirectory path cannot be absolute".into());
+    }
+    // Windows absolute paths (C:\, D:\, etc.)
+    if subdir.len() >= 2 && subdir.chars().nth(1) == Some(':') {
+        return Err("Subdirectory path cannot be absolute".into());
+    }
+    Ok(())
+}
+
 /// Validate git URL format
 fn validate_git_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Allow common git URL patterns
@@ -244,6 +292,11 @@ pub fn install_from_git(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Validate URL before cloning
     validate_git_url(url)?;
+
+    // Validate subdir if provided (prevents path traversal from malicious registry)
+    if let Some(s) = subdir {
+        validate_subdir(s)?;
+    }
 
     // Create temp directory with tempfile crate for secure, atomic creation
     let temp_dir =
@@ -304,6 +357,18 @@ pub fn install_from_git(
             None => "Cloned repository directory not found".to_string(),
         }
         .into());
+    }
+
+    // Defense-in-depth: verify resolved path is within temp directory (handles symlinks)
+    let canonical_install = install_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve install path: {}", e))?;
+    let canonical_temp = temp_dir
+        .path()
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve temp directory: {}", e))?;
+    if !canonical_install.starts_with(&canonical_temp) {
+        return Err("Security error: install path escapes temp directory".into());
     }
 
     // Install from the cloned path
@@ -643,12 +708,34 @@ fn parse_manifest(manifest_path: &Path, package_name: &str) -> Result<ManifestIn
     let manifest_content = read_manifest_checked(manifest_path)?;
     let manifest: serde_json::Value = serde_json::from_str(&manifest_content)?;
 
-    let name = manifest["name"].as_str().unwrap_or(package_name).to_string();
-    let version = manifest["version"].as_str().unwrap_or("0.1.0").to_string();
-    let plugin_version = manifest["plugin_version"]
-        .as_str()
-        .unwrap_or(PLUGIN_VERSION)
-        .to_string();
+    // Warn on missing recommended fields
+    let name = match manifest["name"].as_str() {
+        Some(n) => n.to_string(),
+        None => {
+            eprintln!(
+                "Warning: manifest.json missing 'name' field, using package name '{}'",
+                package_name
+            );
+            package_name.to_string()
+        },
+    };
+    let version = match manifest["version"].as_str() {
+        Some(v) => v.to_string(),
+        None => {
+            eprintln!("Warning: manifest.json missing 'version' field, using default '0.1.0'");
+            "0.1.0".to_string()
+        },
+    };
+    let plugin_version = match manifest["plugin_version"].as_str() {
+        Some(v) => v.to_string(),
+        None => {
+            eprintln!(
+                "Warning: manifest.json missing 'plugin_version' field, using host version '{}'",
+                PLUGIN_VERSION
+            );
+            PLUGIN_VERSION.to_string()
+        },
+    };
 
     let caps = manifest["capabilities"].as_array();
     let is_backend = caps
