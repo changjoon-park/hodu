@@ -145,3 +145,18 @@
 - [x] Track skipped cleanups in ActiveRequestGuard - `server.rs:493-499` now logs warning in debug builds on lock contention
 - [x] Use saturating arithmetic in base64 capacity - `server.rs:400-401` now uses saturating_add to prevent overflow
 - [x] Warn on duplicate request IDs in batch - `server.rs:1052-1061` now warns on duplicate IDs using HashSet
+
+---
+
+## Newly Discovered Issues (8th Analysis)
+
+**Documentation:** (🟡 Important)
+- [x] Document timeout behavior in PluginServer - `server.rs:537-554` added comprehensive timeout documentation
+- [x] Document StreamWriter limits and behavior - `server.rs:304-315` added limits documentation (10MB chunk, 10000 max chunks)
+
+**Validation:** (🟡 Important)
+- [x] Warn on handler overwrite instead of silent replace - already implemented at `server.rs:940-942`
+- [x] Add message size validation for notifications - `server.rs:66-70` added MAX_NOTIFICATION_MESSAGE_LEN (64KB) with truncation
+
+**Macro Safety:** (🟢 Nice-to-have)
+- [x] Improve macro error messages - macros already use `syn::Error::new_spanned()` for proper compiler errors

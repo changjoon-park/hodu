@@ -120,3 +120,20 @@
 - [x] Extract shared is_valid_name() helper - `rpc.rs:85-91` added `is_valid_tensor_name()` helper, used by both TensorInput and TensorOutput
 - [x] Align Notification::progress() with ProgressParams validation - `rpc.rs:922-925` documented the intentional difference (convenience clamping vs strict validation)
 - [x] Document numel_unchecked() overflow behavior - `tensor.rs:260-272` added Warning section and example in docstring
+
+---
+
+## Newly Discovered Issues (8th Analysis)
+
+**Validation:** (🟡 Important)
+- [x] with_hint() silently drops hints beyond MAX_HINTS - `rpc.rs:1158-1168` now logs debug warning when dropping hints
+- [x] Inconsistent MAX_HINTS constant usage - all code paths now use MAX_HINTS consistently
+- [x] Add tensor name length limit - `rpc.rs:35-36` added MAX_TENSOR_NAME_LEN (255 bytes), used in `is_valid_tensor_name()`
+
+**Path Validation:** (🟡 Important)
+- [x] Strengthen path traversal detection - `rpc.rs:95-107` now checks for "~" home expansion and control characters
+- [x] Validate absolute vs relative paths - `rpc.rs:61-67` documented that validation accepts both, caller determines expectation
+
+**API Consistency:** (🟢 Nice-to-have)
+- [x] Document percent clamping vs validation strategy - `rpc.rs:956-970` added table documenting clamping vs validation strategy
+- [x] Add length limits to error message strings - `rpc.rs:38-39` added MAX_ERROR_STRING_LEN (64KB), used in with_cause() and with_hint()

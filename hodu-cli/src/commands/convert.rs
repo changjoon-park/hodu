@@ -5,8 +5,50 @@ use crate::plugins::{load_registry, PluginManager, PluginRegistry};
 use crate::tensor::{load_tensor_data, save_tensor_data};
 use crate::utils::{core_dtype_to_plugin, path_to_str, plugin_dtype_to_core};
 use clap::Args;
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
+
+/// Validate file format by checking magic bytes
+///
+/// Returns Ok if the file format matches the expected extension,
+/// or Err with a descriptive message if there's a mismatch.
+fn validate_file_magic(path: &Path, extension: &str) -> Result<(), String> {
+    let mut file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let mut magic = [0u8; 8];
+    let bytes_read = file.read(&mut magic).map_err(|e| format!("Failed to read file: {}", e))?;
+
+    let valid = match extension {
+        // HDT tensor format - starts with "HDT\x00" (Hodu Tensor)
+        "hdt" => bytes_read >= 4 && &magic[..4] == b"HDT\x00",
+        // HDSS snapshot format - starts with "HDSS" (Hodu Snapshot)
+        "hdss" => bytes_read >= 4 && &magic[..4] == b"HDSS",
+        // JSON - starts with whitespace or '{' or '['
+        "json" => {
+            bytes_read > 0 && {
+                let first_non_ws = magic[..bytes_read]
+                    .iter()
+                    .find(|&&b| !b.is_ascii_whitespace());
+                matches!(first_non_ws, Some(b'{') | Some(b'['))
+            }
+        },
+        // ONNX - Protocol buffer, typically starts with specific bytes
+        // 0x08 (varint field 1) is common for protobuf with ir_version field
+        "onnx" => bytes_read >= 2 && (magic[0] == 0x08 || &magic[..4] == b"ONNX"),
+        // For other formats, skip validation (let plugins handle it)
+        _ => true,
+    };
+
+    if !valid {
+        return Err(format!(
+            "File does not appear to be a valid .{} file (magic bytes mismatch)",
+            extension
+        ));
+    }
+
+    Ok(())
+}
 
 #[derive(Args)]
 pub struct ConvertArgs {
@@ -40,6 +82,11 @@ pub fn execute(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .ok_or("Output file has no extension")?;
+
+    // Validate input file format by checking magic bytes
+    if let Err(e) = validate_file_magic(&args.input, &input_ext) {
+        output::warning(&e);
+    }
 
     let registry = load_registry()?;
 

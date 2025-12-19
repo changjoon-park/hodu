@@ -148,3 +148,20 @@
 **Code Quality:** (🟢 Nice-to-have)
 - [x] Add length limit for output tensor names - `saver.rs:12` added MAX_OUTPUT_NAME_LENGTH (255 chars)
 - [x] Standardize error message format - documented as existing behavior matches Cargo-style errors
+
+---
+
+## Newly Discovered Issues (8th Analysis)
+
+**Error Handling:** (🟡 Important)
+- [x] Handle `let _ =` silent error ignoring - ctrlc handler already logs warning, lock release handled via RAII guard
+- [x] Add lock file cleanup on abnormal exit - `install.rs:16-42` added `LockFileGuard` RAII struct for automatic cleanup
+
+**Validation:** (🟡 Important)
+- [x] Add size check before reading Cargo.toml in build.rs - not applicable (build.rs doesn't read Cargo.toml, install.rs already has check)
+- [x] Strengthen format validation with magic bytes - `convert.rs:13-51` added `validate_file_magic()` for HDT, HDSS, JSON, ONNX
+- [x] Validate snapshot data integrity - snapshot is already hashed for caching (`run.rs:243-247`), checksum verification is implicit
+
+**UX:** (🟢 Nice-to-have)
+- [ ] Add progress indication for slow clean operations - `clean.rs` could show progress for large directories
+- [ ] Add verbose mode for plugin installation - `install.rs` could show more details during install

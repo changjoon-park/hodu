@@ -13,6 +13,34 @@ use std::process::Command;
 use tempfile::TempDir;
 use wait_timeout::ChildExt;
 
+/// RAII guard for lock file cleanup
+///
+/// Ensures the lock file is removed when installation completes (success or failure).
+/// This prevents stale lock files from blocking future installations.
+struct LockFileGuard {
+    path: PathBuf,
+    #[allow(dead_code)]
+    file: File, // Keep file open to maintain lock
+}
+
+impl LockFileGuard {
+    fn new(path: PathBuf, file: File) -> Self {
+        Self { path, file }
+    }
+}
+
+impl Drop for LockFileGuard {
+    fn drop(&mut self) {
+        // Best effort cleanup - log warning on failure
+        if let Err(e) = std::fs::remove_file(&self.path) {
+            // Only warn if file exists but couldn't be removed
+            if self.path.exists() {
+                eprintln!("Warning: Failed to remove lock file: {}", e);
+            }
+        }
+    }
+}
+
 /// Maximum manifest.json file size (1MB)
 const MAX_MANIFEST_SIZE: u64 = 1024 * 1024;
 
@@ -453,6 +481,8 @@ pub fn install_from_path(
     lock_file
         .lock_exclusive()
         .map_err(|e| format!("Failed to acquire lock (another installation in progress?): {}", e))?;
+    // RAII guard ensures lock file is cleaned up on function exit (success or failure)
+    let _lock_guard = LockFileGuard::new(lock_path, lock_file);
 
     // Check if already installed
     if let Some(existing) = registry.find(&name) {

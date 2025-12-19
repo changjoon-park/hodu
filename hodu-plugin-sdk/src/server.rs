@@ -52,10 +52,22 @@ const MAX_BATCH_SIZE: usize = 100;
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Maximum StreamWriter chunk size (10MB)
+///
+/// This limit prevents memory exhaustion from single large chunk writes.
+/// If you need to send more data, split it into multiple chunks.
 const MAX_STREAM_CHUNK_SIZE: usize = 10 * 1024 * 1024;
 
 /// Maximum StreamWriter total chunks (prevents unbounded memory)
+///
+/// After this many chunks, `write_chunk` will return an error.
+/// This prevents runaway streaming from consuming too many resources.
 const MAX_STREAM_CHUNKS: usize = 10000;
+
+/// Maximum notification message length (64KB)
+///
+/// Progress and log messages exceeding this limit will be truncated.
+/// This prevents excessive memory usage in notification handling.
+const MAX_NOTIFICATION_MESSAGE_LEN: usize = 64 * 1024;
 
 /// Reserved method name prefixes that plugins cannot register
 const RESERVED_PREFIXES: &[&str] = &["$/", "rpc.", "system."];
@@ -208,10 +220,20 @@ pub fn notify_progress(percent: Option<u8>, message: &str) {
 /// Send a progress notification to the CLI with error handling
 ///
 /// Returns an error if the notification fails to send, allowing the caller to handle it.
+///
+/// # Message Truncation
+///
+/// Messages exceeding 64KB will be truncated to prevent memory issues.
 pub fn try_notify_progress(percent: Option<u8>, message: &str) -> Result<(), std::io::Error> {
     use std::io::Write;
     // Clamp percent to 0-100
     let percent = percent.map(|p| p.min(100));
+    // Truncate message if too long
+    let message = if message.len() > MAX_NOTIFICATION_MESSAGE_LEN {
+        &message[..MAX_NOTIFICATION_MESSAGE_LEN]
+    } else {
+        message
+    };
     let notification = Notification::progress(percent, message);
     let json =
         serde_json::to_string(&notification).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -236,6 +258,10 @@ pub fn notify_log(level: &str, message: &str) {
 /// Send a log notification to the CLI with error handling
 ///
 /// Returns an error if the notification fails to send, allowing the caller to handle it.
+///
+/// # Message Truncation
+///
+/// Messages exceeding 64KB will be truncated to prevent memory issues.
 pub fn try_notify_log(level: &str, message: &str) -> Result<(), std::io::Error> {
     use std::io::Write;
     // Validate log level, default to "info" if invalid
@@ -243,6 +269,12 @@ pub fn try_notify_log(level: &str, message: &str) -> Result<(), std::io::Error> 
         level
     } else {
         "info"
+    };
+    // Truncate message if too long
+    let message = if message.len() > MAX_NOTIFICATION_MESSAGE_LEN {
+        &message[..MAX_NOTIFICATION_MESSAGE_LEN]
+    } else {
+        message
     };
     let notification = Notification::log(level, message);
     let json =
@@ -273,6 +305,14 @@ pub fn log_debug(message: &str) {
 ///
 /// Allows sending data in chunks during long-running operations,
 /// using JSON-RPC notifications as the transport mechanism.
+///
+/// # Limits
+///
+/// - **Maximum chunk size**: 10MB per chunk (larger chunks will error)
+/// - **Maximum total chunks**: 10,000 chunks per stream (prevents runaway)
+///
+/// If you need to send more data, consider using multiple streams or
+/// compressing the data before sending.
 ///
 /// # Example
 ///
@@ -503,6 +543,23 @@ impl Drop for ActiveRequestGuard {
 // ============================================================================
 
 /// Plugin server that handles JSON-RPC requests over stdio
+///
+/// # Timeout Behavior
+///
+/// By default, all handlers have a 5-minute timeout. When a handler exceeds its timeout:
+/// 1. The handler's cancellation token is triggered
+/// 2. The request returns a `REQUEST_CANCELLED` error with a timeout message
+/// 3. The handler may continue running until it checks `ctx.is_cancelled()`
+///
+/// ## Timeout Configuration
+///
+/// - **Default timeout**: 5 minutes (applied to all handlers)
+/// - **Custom default**: Use `.timeout(duration)` to change the default
+/// - **Per-handler**: Use `.method_with_timeout()` to override for specific handlers
+/// - **No timeout**: Use `.timeout(Duration::MAX)` to effectively disable timeouts
+///
+/// Note: The initialization timeout is controlled by the CLI (typically 30 seconds),
+/// not by the plugin server's timeout setting.
 ///
 /// # Example
 ///

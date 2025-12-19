@@ -32,6 +32,12 @@ pub const MAX_INPUTS: usize = 1000;
 /// Maximum number of hints in error data
 pub const MAX_HINTS: usize = 20;
 
+/// Maximum tensor name length (bytes)
+pub const MAX_TENSOR_NAME_LEN: usize = 255;
+
+/// Maximum error message/cause length (64KB)
+pub const MAX_ERROR_STRING_LEN: usize = 64 * 1024;
+
 /// Reserved field names in error data
 const RESERVED_ERROR_FIELDS: &[&str] = &["cause", "hints", "details", "context", "original_data"];
 
@@ -53,6 +59,12 @@ impl std::fmt::Display for ValidationError {
 impl std::error::Error for ValidationError {}
 
 /// Validate a path string (non-empty, no null bytes, not all whitespace, no path traversal)
+///
+/// # Path Expectations
+///
+/// This validation accepts both absolute and relative paths. The caller is responsible
+/// for determining which type of path is expected for their use case. Paths are validated
+/// for basic security concerns but not for existence or accessibility.
 fn validate_path(path: &str, field: &str) -> Result<(), ValidationError> {
     if path.is_empty() {
         return Err(ValidationError {
@@ -72,19 +84,38 @@ fn validate_path(path: &str, field: &str) -> Result<(), ValidationError> {
             message: "path contains null byte".to_string(),
         });
     }
-    // Check for path traversal sequences
+    // Check for path traversal sequences (both forward and back slashes)
+    // ".." is the standard parent directory reference
     if path.contains("..") {
         return Err(ValidationError {
             field: field.to_string(),
             message: "path contains traversal sequence (..)".to_string(),
         });
     }
+    // Check for home directory expansion (could escape intended directories)
+    if path.starts_with('~') {
+        return Err(ValidationError {
+            field: field.to_string(),
+            message: "path contains home directory expansion (~)".to_string(),
+        });
+    }
+    // Check for control characters that could cause issues
+    if path.chars().any(|c| c.is_control()) {
+        return Err(ValidationError {
+            field: field.to_string(),
+            message: "path contains control characters".to_string(),
+        });
+    }
     Ok(())
 }
 
-/// Validate a tensor name (non-empty, no control chars, no path separators)
+/// Validate a tensor name (non-empty, no control chars, no path separators, within length limit)
 fn is_valid_tensor_name(name: &str) -> bool {
-    !name.is_empty() && !name.chars().any(|c| c.is_control()) && !name.contains('/') && !name.contains('\\')
+    !name.is_empty()
+        && name.len() <= MAX_TENSOR_NAME_LEN
+        && !name.chars().any(|c| c.is_control())
+        && !name.contains('/')
+        && !name.contains('\\')
 }
 
 /// Validate a non-empty string field
@@ -544,7 +575,10 @@ impl TensorInput {
         if !self.is_valid_name() {
             return Err(ValidationError {
                 field: "name".to_string(),
-                message: "invalid tensor name (empty, contains control chars, or path separators)".to_string(),
+                message: format!(
+                    "invalid tensor name (must be non-empty, max {} bytes, no control chars or path separators)",
+                    MAX_TENSOR_NAME_LEN
+                ),
             });
         }
         validate_path(&self.path, "path")
@@ -581,13 +615,16 @@ impl TensorOutput {
         if !self.is_valid_name() {
             return Err(ValidationError {
                 field: "name".to_string(),
-                message: "invalid tensor name (empty, contains control chars, or path separators)".to_string(),
+                message: format!(
+                    "invalid tensor name (must be non-empty, max {} bytes, no control chars or path separators)",
+                    MAX_TENSOR_NAME_LEN
+                ),
             });
         }
         validate_path(&self.path, "path")
     }
 
-    /// Validate tensor name (non-empty, no control chars, no path separators)
+    /// Validate tensor name (non-empty, no control chars, no path separators, within length limit)
     pub fn is_valid_name(&self) -> bool {
         is_valid_tensor_name(&self.name)
     }
@@ -916,10 +953,21 @@ impl Notification {
     /// * `percent` - Progress percentage (0-100), None for indeterminate. Values > 100 are clamped.
     /// * `message` - Human-readable progress message
     ///
-    /// # Note
+    /// # Percent Handling: Clamping vs Validation
     ///
-    /// This method silently clamps percent values > 100 to 100 for convenience.
-    /// For strict validation that rejects invalid values, use `ProgressParams::validate()`.
+    /// This method and the SDK's `notify_progress()` use a **convenience clamping** strategy:
+    /// values > 100 are silently clamped to 100. This is intentional for ease of use since
+    /// progress calculations may occasionally overflow due to rounding.
+    ///
+    /// In contrast, `ProgressParams::validate()` uses **strict validation** that rejects
+    /// values > 100. Use this when you need to ensure data integrity (e.g., deserializing
+    /// untrusted input).
+    ///
+    /// | Method | Strategy | Use Case |
+    /// |--------|----------|----------|
+    /// | `Notification::progress()` | Clamps > 100 | Fire-and-forget progress |
+    /// | `notify_progress()` | Clamps > 100 | SDK convenience function |
+    /// | `ProgressParams::validate()` | Rejects > 100 | Validating untrusted input |
     pub fn progress(percent: Option<u8>, message: impl Into<String>) -> Self {
         // Clamp percent to valid range 0-100 (for convenience; strict validation available via ProgressParams::validate())
         let percent = percent.map(|p| p.min(100));
@@ -1055,6 +1103,10 @@ impl RpcError {
     /// The cause is stored in the `data` field as `{"cause": "..."}`.
     /// Multiple calls chain the causes.
     ///
+    /// # Limits
+    ///
+    /// Cause strings exceeding 64KB are truncated to prevent memory issues.
+    ///
     /// # Example
     ///
     /// ```ignore
@@ -1063,6 +1115,12 @@ impl RpcError {
     /// ```
     pub fn with_cause(mut self, cause: impl Into<String>) -> Self {
         let cause_str = cause.into();
+        // Truncate overly long cause strings
+        let cause_str = if cause_str.len() > MAX_ERROR_STRING_LEN {
+            cause_str[..MAX_ERROR_STRING_LEN].to_string()
+        } else {
+            cause_str
+        };
         self.data = Some(match self.data {
             Some(mut data) => {
                 if let Some(obj) = data.as_object_mut() {
@@ -1073,10 +1131,14 @@ impl RpcError {
                             serde_json::Value::String(s) => s.clone(),
                             other => other.to_string(),
                         };
-                        obj.insert(
-                            "cause".to_string(),
-                            serde_json::json!(format!("{} <- {}", cause_str, existing_str)),
-                        );
+                        // Truncate combined cause if too long
+                        let combined = format!("{} <- {}", cause_str, existing_str);
+                        let combined = if combined.len() > MAX_ERROR_STRING_LEN {
+                            combined[..MAX_ERROR_STRING_LEN].to_string()
+                        } else {
+                            combined
+                        };
+                        obj.insert("cause".to_string(), serde_json::json!(combined));
                     } else {
                         obj.insert("cause".to_string(), serde_json::json!(cause_str));
                     }
@@ -1111,6 +1173,11 @@ impl RpcError {
     ///
     /// Hints suggest possible actions to resolve the error.
     ///
+    /// # Limits
+    ///
+    /// - Maximum 20 hints per error (additional hints are dropped with a debug warning)
+    /// - Hints exceeding 64KB are truncated
+    ///
     /// # Example
     ///
     /// ```ignore
@@ -1120,14 +1187,31 @@ impl RpcError {
     /// ```
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         let hint_str = hint.into();
+        // Truncate overly long hints
+        let hint_str = if hint_str.len() > MAX_ERROR_STRING_LEN {
+            hint_str[..MAX_ERROR_STRING_LEN].to_string()
+        } else {
+            hint_str
+        };
         self.data = Some(match self.data {
             Some(mut data) => {
                 if let Some(obj) = data.as_object_mut() {
                     if let Some(hints) = obj.get_mut("hints") {
                         if let Some(arr) = hints.as_array_mut() {
-                            // Enforce hints limit
+                            // Enforce hints limit with warning
                             if arr.len() < MAX_HINTS {
                                 arr.push(serde_json::json!(hint_str));
+                            } else {
+                                #[cfg(debug_assertions)]
+                                eprintln!(
+                                    "Warning: Maximum hints ({}) reached, hint dropped: {}",
+                                    MAX_HINTS,
+                                    if hint_str.len() > 50 {
+                                        format!("{}...", &hint_str[..50])
+                                    } else {
+                                        hint_str.clone()
+                                    }
+                                );
                             }
                         } else {
                             // hints exists but is not an array - convert to array
